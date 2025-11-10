@@ -119,6 +119,34 @@ def find_claude_config():
     print(f"Claude Desktop config not found. Using default path: {default_path}")
     return default_path
 
+def _test_local_embedding_connection(base_url: str, model_name: str, api_key: str) -> bool:
+    """Test connection to a local embedding server."""
+    print(f"\nTesting connection to {base_url}...")
+    try:
+        from zotero_mcp.chroma_client import LocalEmbeddingFunction
+
+        embed_func = LocalEmbeddingFunction(
+            base_url=base_url,
+            model_name=model_name,
+            api_key=api_key
+        )
+
+        # This will raise an exception if it fails
+        embeddings = embed_func(["test connection"])
+
+        if embeddings and isinstance(embeddings, list) and len(embeddings) > 0:
+            if isinstance(embeddings[0], list) and len(embeddings[0]) > 0:
+                print("✅ Connection successful!")
+                return True
+
+        print("❌ Connection failed: The server returned an unexpected response.")
+        return False
+
+    except Exception as e:
+        print(f"❌ Connection failed: {e}")
+        return False
+
+
 def setup_semantic_search(existing_semantic_config: dict = None, semantic_config_only_arg: bool = False) -> dict:
     """Interactive setup for semantic search configuration."""
     print("\n=== Semantic Search Configuration ===")
@@ -145,12 +173,13 @@ def setup_semantic_search(existing_semantic_config: dict = None, semantic_config
     print("1. Default (all-MiniLM-L6-v2) - Free, runs locally")
     print("2. OpenAI - Better quality, requires API key")
     print("3. Gemini - Better quality, requires API key")
+    print("4. Local - Use a local, OpenAI-compatible server (e.g., LM Studio)")
     
     while True:
-        choice = input("\nChoose embedding model (1-3): ").strip()
-        if choice in ["1", "2", "3"]:
+        choice = input("\nChoose embedding model (1-4): ").strip()
+        if choice in ["1", "2", "3", "4"]:
             break
-        print("Please enter 1, 2, or 3")
+        print("Please enter 1, 2, 3, or 4")
     
     config = {}
     
@@ -225,6 +254,48 @@ def setup_semantic_search(existing_semantic_config: dict = None, semantic_config
             print(f"Using custom Gemini base URL: {base_url}")
         else:
             print("Using default Gemini base URL")
+
+    elif choice == "4":
+        config["embedding_model"] = "local"
+        print("\n--- Configure Local Embedding Model ---")
+        print("This uses a local, OpenAI-compatible API endpoint like LM Studio.")
+
+        while True:
+            base_url = input("Enter the base URL of your local server (e.g., http://localhost:1234/v1): ").strip()
+            if not base_url:
+                print("Base URL cannot be empty.")
+                continue
+
+            model_name = input("Enter the model name (leave blank to use the server's default): ").strip() or "local-model"
+            api_key = input("Enter an API key if required (leave blank for none): ").strip() or "local-placeholder"
+
+            if _test_local_embedding_connection(base_url, model_name, api_key):
+                config["embedding_config"] = {
+                    "base_url": base_url,
+                    "model_name": model_name,
+                    "api_key": api_key,
+                }
+                print("Local embedding settings configured.")
+                break
+            else:
+                print("\nConnection failed. Please check the URL and that your local server is running.")
+                print("What would you like to do?")
+                print("1. Re-enter settings and try again")
+                print("2. Choose a different embedding model")
+                print("3. Abort semantic search setup")
+                while True:
+                    retry_choice = input("Choose an option (1-3): ").strip()
+                    if retry_choice in ["1", "2", "3"]:
+                        break
+                    print("Invalid choice.")
+
+                if retry_choice == "1":
+                    continue
+                elif retry_choice == "2":
+                    return setup_semantic_search(existing_semantic_config, semantic_config_only_arg)
+                elif retry_choice == "3":
+                    print("Aborting semantic search setup.")
+                    return {}
     
     # Configure update frequency
     print("\n=== Database Update Configuration ===")
@@ -405,6 +476,14 @@ def update_claude_config(config_path, zotero_mcp_path, local=True, api_key=None,
                 env_settings["GEMINI_EMBEDDING_MODEL"] = model
             if base_url := embedding_config.get("base_url"):
                 env_settings["GEMINI_BASE_URL"] = base_url
+
+        elif semantic_config.get("embedding_model") == "local":
+            if base_url := embedding_config.get("base_url"):
+                env_settings["LOCAL_BASE_URL"] = base_url
+            if model := embedding_config.get("model_name"):
+                env_settings["LOCAL_EMBEDDING_MODEL"] = model
+            if api_key := embedding_config.get("api_key"):
+                env_settings["LOCAL_API_KEY"] = api_key
     
     # Add or update zotero config
     config["mcpServers"]["zotero"] = {

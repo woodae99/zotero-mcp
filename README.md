@@ -106,12 +106,13 @@ zotero-mcp setup --semantic-config-only
 ```
 
 **Available Embedding Models:**
-- **Default (all-MiniLM-L6-v2)**: Free, runs locally, good for most use cases
-- **OpenAI**: Better quality, requires API key (`text-embedding-3-small` or `text-embedding-3-large`)
-- **Gemini**: Better quality, requires API key (`models/text-embedding-004` or experimental models)
+- **Default (all-MiniLM-L6-v2)**: Free, runs locally, good for most use cases.
+- **OpenAI**: Better quality, requires API key (`text-embedding-3-small` or `text-embedding-3-large`).
+- **Gemini**: Better quality, requires API key (`models/text-embedding-004` or experimental models).
+- **Local**: Use a local, OpenAI-compatible server (e.g., LM Studio) for full privacy and control.
 
 **Update Frequency Options:**
-- **Manual**: Update only when you run `zotero-mcp update-db`
+- **Manual**: Update only when you run `zotero-mcp update-db`.
 - **Auto on startup**: Update database every time the server starts
 - **Daily**: Update once per day automatically
 - **Every N days**: Set custom interval
@@ -239,13 +240,16 @@ zotero-mcp setup --no-local --api-key YOUR_API_KEY --library-id YOUR_LIBRARY_ID
 - `ZOTERO_LIBRARY_TYPE`: The type of library (user or group, default: user)
 
 **Semantic Search:**
-- `ZOTERO_EMBEDDING_MODEL`: Embedding model to use (default, openai, gemini)
+- `ZOTERO_EMBEDDING_MODEL`: Embedding model to use (default, openai, gemini, local)
 - `OPENAI_API_KEY`: Your OpenAI API key (for OpenAI embeddings)
 - `OPENAI_EMBEDDING_MODEL`: OpenAI model name (text-embedding-3-small, text-embedding-3-large)
 - `OPENAI_BASE_URL`: Custom OpenAI endpoint URL (optional, for use with compatible APIs)
 - `GEMINI_API_KEY`: Your Gemini API key (for Gemini embeddings)
 - `GEMINI_EMBEDDING_MODEL`: Gemini model name (models/text-embedding-004, etc.)
 - `GEMINI_BASE_URL`: Custom Gemini endpoint URL (optional, for use with compatible APIs)
+- `LOCAL_BASE_URL`: Base URL for your local, OpenAI-compatible embedding server
+- `LOCAL_EMBEDDING_MODEL`: Model name for your local server (optional)
+- `LOCAL_API_KEY`: API key for your local server (optional)
 
 ### Command-Line Options
 
