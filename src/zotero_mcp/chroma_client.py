@@ -106,6 +106,44 @@ class GeminiEmbeddingFunction(EmbeddingFunction):
         return embeddings
 
 
+class LocalEmbeddingFunction(EmbeddingFunction):
+    """Custom embedding function for local, OpenAI-compatible APIs."""
+
+    def __init__(self, model_name: str = "local-model", api_key: Optional[str] = "local-placeholder", base_url: Optional[str] = None):
+        self.model_name = model_name
+        # Default to a placeholder if no key is provided, as the client may require one.
+        self.api_key = api_key or "local-placeholder"
+        self.base_url = base_url
+        if not self.base_url:
+            raise ValueError("A base_url for the local embedding server is required")
+
+        try:
+            import openai
+            client_kwargs = {
+                "api_key": self.api_key,
+                "base_url": self.base_url,
+            }
+            self.client = openai.OpenAI(**client_kwargs)
+        except ImportError:
+            raise ImportError("openai package is required for local embeddings")
+
+    def name(self) -> str:
+        """Return the name of this embedding function."""
+        return "local"
+
+    def __call__(self, input: Documents) -> Embeddings:
+        """Generate embeddings using a local, OpenAI-compatible API."""
+        try:
+            response = self.client.embeddings.create(
+                model=self.model_name,
+                input=input
+            )
+            return [data.embedding for data in response.data]
+        except Exception as e:
+            logger.error(f"Failed to get embeddings from local server: {e}")
+            raise
+
+
 class ChromaClient:
     """ChromaDB client for Zotero semantic search."""
     
@@ -120,7 +158,7 @@ class ChromaClient:
         Args:
             collection_name: Name of the ChromaDB collection
             persist_directory: Directory to persist the database
-            embedding_model: Model to use for embeddings ('default', 'openai', 'gemini')
+            embedding_model: Model to use for embeddings ('default', 'openai', 'gemini', 'local')
             embedding_config: Configuration for the embedding model
         """
         self.collection_name = collection_name
@@ -187,6 +225,12 @@ class ChromaClient:
             base_url = self.embedding_config.get("base_url")
             return GeminiEmbeddingFunction(model_name=model_name, api_key=api_key, base_url=base_url)
         
+        elif self.embedding_model == "local":
+            model_name = self.embedding_config.get("model_name", "local-model")
+            api_key = self.embedding_config.get("api_key", "local-placeholder")
+            base_url = self.embedding_config.get("base_url")
+            return LocalEmbeddingFunction(model_name=model_name, api_key=api_key, base_url=base_url)
+
         else:
             # Use ChromaDB's default embedding function (all-MiniLM-L6-v2)
             return chromadb.utils.embedding_functions.DefaultEmbeddingFunction()
@@ -379,6 +423,16 @@ def create_chroma_client(config_path: Optional[str] = None) -> ChromaClient:
             if gemini_base_url:
                 config["embedding_config"]["base_url"] = gemini_base_url
     
+    elif config["embedding_model"] == "local":
+        local_model = os.getenv("LOCAL_EMBEDDING_MODEL", "local-model")
+        local_base_url = os.getenv("LOCAL_BASE_URL")
+        if local_base_url:
+            config["embedding_config"] = {
+                "model_name": local_model,
+                "base_url": local_base_url,
+                "api_key": os.getenv("LOCAL_API_KEY", "local-placeholder")
+            }
+
     return ChromaClient(
         collection_name=config["collection_name"],
         embedding_model=config["embedding_model"],
