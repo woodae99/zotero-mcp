@@ -20,6 +20,45 @@ def format_creators(creators: list[dict[str, str]]) -> str:
     return "; ".join(names) if names else "No authors listed"
 
 
+def parse_creators(creators_list: list[str], creator_type: str = "author") -> list[dict[str, str]]:
+    """
+    Parse a list of creator names strings into Zotero creator objects.
+
+    Args:
+        creators_list: List of name strings (e.g. ["Smith, John", "Doe, Jane"])
+        creator_type: The type of creator (author, editor, etc.)
+
+    Returns:
+        List of Zotero creator dictionaries.
+    """
+    creators = []
+    for name in creators_list:
+        name = name.strip()
+        if "," in name:
+            # Assume "Last, First" format
+            parts = name.split(",", 1)
+            creators.append({
+                "creatorType": creator_type,
+                "lastName": parts[0].strip(),
+                "firstName": parts[1].strip()
+            })
+        elif " " in name:
+            # Assume "First Last" format - naive split on last space
+            parts = name.rsplit(" ", 1)
+            creators.append({
+                "creatorType": creator_type,
+                "lastName": parts[1].strip(),
+                "firstName": parts[0].strip()
+            })
+        else:
+            # Single name
+            creators.append({
+                "creatorType": creator_type,
+                "name": name
+            })
+    return creators
+
+
 def is_local_mode() -> bool:
     """Return True if running in local mode.
 

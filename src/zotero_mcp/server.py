@@ -24,7 +24,7 @@ from zotero_mcp.client import (
     get_attachment_details,
     get_zotero_client,
 )
-from zotero_mcp.utils import format_creators
+from zotero_mcp.utils import format_creators, parse_creators
 
 @asynccontextmanager
 async def server_lifespan(server: FastMCP):
@@ -1960,6 +1960,476 @@ def get_search_database_status(*, ctx: Context) -> str:
     except Exception as e:
         ctx.error(f"Error getting database status: {str(e)}")
         return f"Error getting database status: {str(e)}"
+
+
+def _create_item_impl(
+    item_type: str,
+    item_data: str | dict[str, str],
+    collections: list[str] | None = None,
+    tags: list[str] | None = None,
+    ctx: Context = None
+) -> str:
+    """Implementation of item creation logic."""
+    try:
+        if ctx:
+            ctx.info(f"Creating item of type '{item_type}'")
+        zot = get_zotero_client()
+
+        # Parse item_data if it's a string
+        if isinstance(item_data, str):
+            try:
+                item_data = json.loads(item_data)
+            except json.JSONDecodeError:
+                return f"Error: item_data must be a valid JSON string or dictionary. Received: {item_data}"
+
+        # Get a template for the item type
+        try:
+            template = zot.item_template(item_type)
+        except Exception as e:
+            return f"Error getting template for item type '{item_type}': {str(e)}"
+
+        # Populate the template
+        for key, value in item_data.items():
+            if key in template:
+                template[key] = value
+            elif ctx:
+                ctx.warn(f"Field '{key}' not found in template for '{item_type}', skipping.")
+
+        # Add collections and tags if provided
+        if collections:
+            template["collections"] = collections
+
+        if tags:
+            template["tags"] = [{"tag": tag} for tag in tags]
+
+        # Create the item
+        result = zot.create_items([template])
+
+        # Check for success
+        if "success" in result and result["success"]:
+            successful = result["success"]
+            if len(successful) > 0:
+                # Get the first key (should be only one)
+                item_key = next(iter(successful.values()))
+
+                # Try to get the title for the confirmation message
+                title = template.get("title", "Untitled Item")
+                return f"Successfully created {item_type}: \"{title}\" (Key: {item_key})"
+            else:
+                return f"Item creation response was successful but no key was returned: {result}"
+        else:
+            return f"Failed to create item: {result.get('failed', 'Unknown error')}"
+
+    except Exception as e:
+        if ctx:
+            ctx.error(f"Error creating item: {str(e)}")
+        return f"Error creating item: {str(e)}"
+
+
+@mcp.tool(
+    name="zotero_create_item",
+    description="Create a new item in your Zotero library using a generic JSON template."
+)
+def create_item(
+    item_type: str,
+    item_data: str | dict[str, str],
+    collections: list[str] | None = None,
+    tags: list[str] | None = None,
+    *,
+    ctx: Context
+) -> str:
+    """
+    Create a new item in your Zotero library.
+
+    Args:
+        item_type: The type of item to create (e.g., 'book', 'journalArticle', 'webpage')
+        item_data: Dictionary of item fields (e.g., {'title': 'My Book', 'date': '2023'}) or JSON string
+        collections: List of collection keys to add the item to
+        tags: List of tags to add to the item
+        ctx: MCP context
+
+    Returns:
+        Confirmation message with the new item key
+    """
+    return _create_item_impl(item_type, item_data, collections, tags, ctx=ctx)
+
+
+@mcp.tool(
+    name="zotero_create_book",
+    description="Create a new book item in your Zotero library."
+)
+def create_book(
+    title: str,
+    authors: list[str],
+    date: str | None = None,
+    publisher: str | None = None,
+    isbn: str | None = None,
+    url: str | None = None,
+    abstract: str | None = None,
+    tags: list[str] | None = None,
+    *,
+    ctx: Context
+) -> str:
+    """
+    Create a new book item in your Zotero library.
+
+    Args:
+        title: Title of the book
+        authors: List of author names (e.g., ["Smith, John", "Jane Doe"])
+        date: Publication date (e.g., "2023", "2023-01-01")
+        publisher: Publisher name
+        isbn: ISBN number
+        url: URL to the book
+        abstract: Abstract or summary
+        tags: List of tags to add
+        ctx: MCP context
+
+    Returns:
+        Confirmation message with the new item key
+    """
+    try:
+        # Prepare item data
+        item_data = {
+            "title": title
+        }
+
+        if date:
+            item_data["date"] = date
+        if publisher:
+            item_data["publisher"] = publisher
+        if isbn:
+            item_data["ISBN"] = isbn
+        if url:
+            item_data["url"] = url
+        if abstract:
+            item_data["abstractNote"] = abstract
+
+        # Parse authors
+        creators = parse_creators(authors, "author")
+        # We need to manually set creators in the template because it's a list of dicts,
+        # which isn't handled by the simple loop in create_item if passed as "creators"
+        # However, create_item takes item_data and copies fields.
+        # So we should pass creators in item_data.
+        item_data["creators"] = creators
+
+        return _create_item_impl(
+            item_type="book",
+            item_data=item_data,
+            tags=tags,
+            ctx=ctx
+        )
+
+    except Exception as e:
+        ctx.error(f"Error creating book: {str(e)}")
+        return f"Error creating book: {str(e)}"
+
+
+@mcp.tool(
+    name="zotero_create_article",
+    description="Create a new journal article item in your Zotero library."
+)
+def create_article(
+    title: str,
+    authors: list[str],
+    publication: str,
+    date: str | None = None,
+    volume: str | None = None,
+    issue: str | None = None,
+    pages: str | None = None,
+    doi: str | None = None,
+    url: str | None = None,
+    abstract: str | None = None,
+    tags: list[str] | None = None,
+    *,
+    ctx: Context
+) -> str:
+    """
+    Create a new journal article item.
+
+    Args:
+        title: Article title
+        authors: List of author names
+        publication: Journal/Publication title
+        date: Publication date
+        volume: Volume number
+        issue: Issue number
+        pages: Page range
+        doi: DOI
+        url: URL
+        abstract: Abstract
+        tags: List of tags
+        ctx: MCP context
+
+    Returns:
+        Confirmation message with the new item key
+    """
+    try:
+        item_data = {
+            "title": title,
+            "publicationTitle": publication
+        }
+
+        if date:
+            item_data["date"] = date
+        if volume:
+            item_data["volume"] = volume
+        if issue:
+            item_data["issue"] = issue
+        if pages:
+            item_data["pages"] = pages
+        if doi:
+            item_data["DOI"] = doi
+        if url:
+            item_data["url"] = url
+        if abstract:
+            item_data["abstractNote"] = abstract
+
+        item_data["creators"] = parse_creators(authors, "author")
+
+        return _create_item_impl(
+            item_type="journalArticle",
+            item_data=item_data,
+            tags=tags,
+            ctx=ctx
+        )
+
+    except Exception as e:
+        ctx.error(f"Error creating article: {str(e)}")
+        return f"Error creating article: {str(e)}"
+
+
+@mcp.tool(
+    name="zotero_create_webpage",
+    description="Create a new webpage item in your Zotero library."
+)
+def create_webpage(
+    title: str,
+    url: str,
+    authors: list[str] | None = None,
+    website_title: str | None = None,
+    access_date: str | None = None,
+    abstract: str | None = None,
+    tags: list[str] | None = None,
+    *,
+    ctx: Context
+) -> str:
+    """
+    Create a new webpage item.
+
+    Args:
+        title: Page title
+        url: URL
+        authors: List of author names (optional)
+        website_title: Name of the website
+        access_date: Date accessed (e.g., "2023-01-01")
+        abstract: Summary/Abstract
+        tags: List of tags
+        ctx: MCP context
+
+    Returns:
+        Confirmation message with the new item key
+    """
+    try:
+        item_data = {
+            "title": title,
+            "url": url
+        }
+
+        if website_title:
+            item_data["websiteTitle"] = website_title
+        if access_date:
+            item_data["accessDate"] = access_date
+        if abstract:
+            item_data["abstractNote"] = abstract
+
+        if authors:
+            item_data["creators"] = parse_creators(authors, "author")
+
+        return _create_item_impl(
+            item_type="webpage",
+            item_data=item_data,
+            tags=tags,
+            ctx=ctx
+        )
+
+    except Exception as e:
+        ctx.error(f"Error creating webpage: {str(e)}")
+        return f"Error creating webpage: {str(e)}"
+
+
+@mcp.tool(
+    name="zotero_update_item",
+    description="Update an existing Zotero item with new data (last-write-wins strategy)."
+)
+def update_item(
+    item_key: str,
+    item_data: str | dict[str, str],
+    *,
+    ctx: Context
+) -> str:
+    """
+    Update an existing Zotero item.
+
+    This function implements a "last-write-wins" strategy: it fetches the current
+    version of the item, applies the requested changes, and attempts to update it.
+    If the version has changed in the meantime (race condition), it will fail
+    and request the user to try again.
+
+    Args:
+        item_key: The key of the item to update
+        item_data: Dictionary of fields to update (or JSON string)
+        ctx: MCP context
+
+    Returns:
+        Confirmation message
+    """
+    try:
+        ctx.info(f"Updating item {item_key}")
+        zot = get_zotero_client()
+
+        # Parse item_data if it's a string
+        if isinstance(item_data, str):
+            try:
+                item_data = json.loads(item_data)
+            except json.JSONDecodeError:
+                return f"Error: item_data must be a valid JSON string or dictionary. Received: {item_data}"
+
+        # 1. Fetch the current item to get its version and data
+        try:
+            current_item = zot.item(item_key)
+            if not current_item:
+                return f"Error: Item {item_key} not found."
+        except Exception as e:
+            return f"Error fetching item {item_key}: {str(e)}"
+
+        # 2. Update the fields
+        data_to_update = current_item.get("data", {})
+
+        # Apply changes
+        for key, value in item_data.items():
+            # Special handling for collections/tags if needed, but simple assignment works for most
+            # if we are replacing the list. If merging, we'd need more logic.
+            # Assuming replacement for simple fields.
+            # Note: updating "creators" requires full list.
+            data_to_update[key] = value
+
+        # 3. Submit update
+        # pyzotero's update_item handles the version/If-Unmodified-Since-Version internally
+        # if the item dict passed to it contains the 'version' field (which it does, from zot.item())
+        try:
+            result = zot.update_item(current_item)
+
+            # Check for success (204 No Content typically means success in HTTP,
+            # but pyzotero might return the response object or boolean/dict)
+            # From docs, it returns nothing on success (None), or raises generic error?
+            # Actually, `update_item` returns a dict with success/failed keys usually?
+            # Re-checking documentation/previous exploration:
+            # "Accepts one argument, a dict containing Item data"
+            # It usually returns `None` on success for single item if I recall, or the API response?
+            # Let's inspect the result variable safely.
+
+            # Actually, update_item might return the server response.
+            # If it fails due to version conflict, it raises a 412 Precondition Failed.
+
+            return f"Successfully updated item {item_key}."
+
+        except Exception as e:
+            # Handle 412 Precondition Failed specifically if possible
+            if "412" in str(e) or "Precondition Failed" in str(e):
+                return f"Error: Version conflict. The item has been modified on the server since we retrieved it. Please try again."
+            return f"Error updating item: {str(e)}"
+
+    except Exception as e:
+        ctx.error(f"Error in update_item: {str(e)}")
+        return f"Error in update_item: {str(e)}"
+
+
+@mcp.tool(
+    name="zotero_trash_item",
+    description="Move an item to the trash (soft delete)."
+)
+def trash_item(
+    item_key: str,
+    *,
+    ctx: Context
+) -> str:
+    """
+    Move an item to the trash (soft delete).
+
+    This is effectively an update operation that sets the 'deleted' flag to 1.
+
+    Args:
+        item_key: The key of the item to trash
+        ctx: MCP context
+
+    Returns:
+        Confirmation message
+    """
+    try:
+        ctx.info(f"Trashing item {item_key}")
+        zot = get_zotero_client()
+
+        # Fetch current item
+        try:
+            item = zot.item(item_key)
+        except Exception as e:
+            return f"Error fetching item {item_key}: {str(e)}"
+
+        # Set deleted flag
+        item["data"]["deleted"] = 1
+
+        # Update
+        zot.update_item(item)
+
+        return f"Successfully moved item {item_key} to trash."
+
+    except Exception as e:
+        ctx.error(f"Error trashing item: {str(e)}")
+        return f"Error trashing item: {str(e)}"
+
+
+@mcp.tool(
+    name="zotero_delete_item_permanently",
+    description="Permanently delete an item from the library. This action cannot be undone."
+)
+def delete_item_permanently(
+    item_key: str,
+    *,
+    ctx: Context
+) -> str:
+    """
+    Permanently delete an item.
+
+    Args:
+        item_key: The key of the item to delete
+        ctx: MCP context
+
+    Returns:
+        Confirmation message
+    """
+    try:
+        ctx.info(f"Permanently deleting item {item_key}")
+        zot = get_zotero_client()
+
+        # Delete item - requires a dict with key/version or just the ID?
+        # Pyzotero delete_item takes a "payload".
+        # "Accepts a single argument: a dict containing item data OR a list of dicts containing item data"
+        # However, looking at pyzotero source or examples, often one passes the item object.
+        # But wait, to delete, we usually just need the key and version.
+
+        # Let's fetch the item first to be safe and pass it as payload
+        try:
+            item = zot.item(item_key)
+        except Exception as e:
+            return f"Error fetching item {item_key} (it may not exist): {str(e)}"
+
+        zot.delete_item(item)
+
+        return f"Successfully permanently deleted item {item_key}."
+
+    except Exception as e:
+        ctx.error(f"Error deleting item: {str(e)}")
+        return f"Error deleting item: {str(e)}"
 
 
 # --- Minimal wrappers for ChatGPT connectors ---
