@@ -14,7 +14,9 @@ pip install zotero-mcp
 
 The server needs to know how to connect to your Zotero library. There are two main ways to do this:
 
-### Option 1: Local Zotero (Recommended)
+Quick guide: choose Local API for read-only workflows on the same machine. Choose Web API if you plan to create/update/delete items, collections, tags, or notes.
+
+### Option 1: Local Zotero (Read-only workflows)
 
 If you're running Zotero 7 or newer on the same machine, you can connect to the local API:
 
@@ -28,13 +30,13 @@ If you're running Zotero 7 or newer on the same machine, you can connect to the 
    export ZOTERO_LOCAL=true
    ```
 
-### Option 2: Zotero Web API
+### Option 2: Zotero Web API (Required for write tools)
 
 If you want to connect to your Zotero library via the web API:
 
 1. Get your Zotero API key:
    - Go to [https://www.zotero.org/settings/keys](https://www.zotero.org/settings/keys)
-   - Create a new key with appropriate permissions (at least "Read" access)
+   - Create a new key with appropriate permissions (include "Write" if you plan to use write tools)
 
 2. Find your library ID:
    - For personal libraries, your user ID is available at the same page
@@ -46,6 +48,8 @@ If you want to connect to your Zotero library via the web API:
    export ZOTERO_LIBRARY_ID=your_library_id
    export ZOTERO_LIBRARY_TYPE=user  # or 'group' for group libraries
    ```
+
+To switch later, update your environment variables (or rerun `zotero-mcp setup --no-local` and replace your client config) to move between local and web modes.
 
 ## Integrating with Claude Desktop
 
@@ -184,6 +188,8 @@ zotero-mcp --transport sse --host localhost --port 8000
 
 When connected to Claude Desktop or another MCP client, you'll have access to these tools:
 
+Note: Write tools (create/update/delete) require Web API mode with a key that has write permissions.
+
 - **zotero_search_items**: Search your library by title, creator, or content
 - **zotero_get_item_metadata**: Get detailed information about a specific item
 - **zotero_get_item_fulltext**: Get the full text content of an item
@@ -192,6 +198,30 @@ When connected to Claude Desktop or another MCP client, you'll have access to th
 - **zotero_get_item_children**: Get child items (attachments, notes) for a specific item
 - **zotero_get_tags**: Get all tags used in your library
 - **zotero_get_recent**: Get recently added items to your library
+- **zotero_search_by_tag**: Search by tag filters
+- **zotero_advanced_search**: Complex searches with multiple criteria
+- **zotero_get_annotations**: Get annotations (including direct PDF extraction)
+- **zotero_get_notes**: Retrieve notes from your library
+- **zotero_search_notes**: Search in notes and annotations
+- **zotero_create_note**: Create a new note for an item
+- **zotero_create_items**: Create one or more items from editable JSON
+- **zotero_update_item**: Update a single item (PATCH semantics)
+- **zotero_update_items**: Batch update items (PATCH semantics)
+- **zotero_delete_item**: Delete a single item by key
+- **zotero_delete_items**: Delete multiple items by key
+- **zotero_create_collection**: Create a collection
+- **zotero_update_collection**: Update a collection
+- **zotero_delete_collection**: Delete a collection by key
+- **zotero_delete_collections**: Delete multiple collections by key
+- **zotero_create_saved_search**: Create a saved search
+- **zotero_delete_saved_search**: Delete saved searches by key
+- **zotero_delete_tags**: Delete tags in bulk
+- **zotero_normalize_tags**: Normalize tags by mapping/case/trim
+- **zotero_batch_update_items**: Batch update items matching conditions
+- **zotero_collect_items**: Add items matching a query to a collection
+- **zotero_plan_tag_normalization**: Plan a staged tag normalization job
+- **zotero_apply_tag_normalization**: Apply a staged tag normalization batch
+- **zotero_resume_tag_normalization**: Resume a staged tag normalization job
 
 ## Example Queries
 
@@ -202,6 +232,46 @@ Once connected, you can ask Claude questions like:
 - "Show me my most recent additions to Zotero"
 - "What collections do I have in my Zotero library?"
 - "Get the full text of paper XYZ from my Zotero library"
+
+## Staged Tag Normalization Jobs
+
+You can run tag cleanup in batches with a checkpoint file stored in `~/.config/zotero-mcp/jobs/` (30-day retention). Override the base directory with `ZOTERO_MCP_DATA_DIR`.
+
+Example flow:
+
+1. Plan: `zotero_plan_tag_normalization(query="foo", tag_mapping={"Foo":"foo"}, case_mode="lower")`
+2. Apply in batches: `zotero_apply_tag_normalization(job_id="...", batch_size=50)`
+3. Resume later: `zotero_resume_tag_normalization(job_id="...", batch_size=50)`
+
+## Library Management Recipes
+
+Here are a few practical workflows you can run safely in stages:
+
+### Normalize Tags in Batches
+
+1. Plan and review sample diffs:
+   `zotero_plan_tag_normalization(query="tag:ML", tag_mapping={"Machine Learning":"ML"}, case_mode="title")`
+2. Apply in small batches:
+   `zotero_apply_tag_normalization(job_id="...", batch_size=50)`
+3. Resume until complete:
+   `zotero_resume_tag_normalization(job_id="...", batch_size=50)`
+
+### Batch Update Items by Rule
+
+Add a tag to items missing an abstract:
+
+`zotero_batch_update_items(conditions=[{"field":"abstractNote","operation":"isEmpty","value":""}], updates={"tags":[{"tag":"needs-abstract"}]}, dry_run=false)`
+
+### Collect Items into a Review Collection
+
+Create a collection and move matching items into it:
+
+`zotero_create_collection(name="Needs Metadata Review")`
+`zotero_collect_items(query="needs-abstract", collection_key="...", dry_run=false)`
+
+## Tool Prompt Checklist
+
+A full set of test prompts for each MCP tool is available in `docs/tool-prompts.md`.
 
 ## Troubleshooting
 

@@ -591,6 +591,8 @@ def main(cli_args=None):
         print(f"  API Key: {api_key or 'Not provided'}")
         print(f"  Library ID: {library_id or 'Not provided'}")
         print(f"  Library Type: {library_type}")
+    else:
+        print("  Note: Write tools (create/update/delete) require Web API mode (--no-local).")
 
     # Use the potentially updated semantic config
     semantic_config = existing_semantic_config
@@ -648,6 +650,7 @@ def main(cli_args=None):
                     print("- Use zotero_semantic_search tool in Claude for AI-powered search")
                 if use_local:
                     print("\nNote: Make sure Zotero desktop is running and the local API is enabled in preferences.")
+                    print("Write tools require Web API mode. Re-run setup with --no-local to enable them.")
                 else:
                     missing = []
                     if not api_key:

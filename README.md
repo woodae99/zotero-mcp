@@ -50,6 +50,7 @@
 - Local method for offline access (no API key needed)
 - Web API for cloud library access
 - Perfect for both local research and remote collaboration
+- Note: Write operations (create/update/delete) require the Web API; local API access is read-focused.
 
 ## 🚀 Quick Install
 
@@ -235,6 +236,8 @@ For accessing your Zotero library via the web API (useful for remote setups):
 zotero-mcp setup --no-local --api-key YOUR_API_KEY --library-id YOUR_LIBRARY_ID
 ```
 
+When to choose Web API: If you plan to use write tools (create/update/delete items, collections, tags, notes), you must use the Web API and an API key with write permissions. Local API access is best for read-only workflows.
+
 ### Environment Variables
 
 **Zotero Connection:**
@@ -298,14 +301,14 @@ For optimal annotation extraction, it is **highly recommended** to install the [
 
 The first time you use PDF annotation features, the necessary tools will be automatically downloaded.
 
-## 📚 Available Tools
+## Available Tools
 
-### 🧠 Semantic Search Tools
+### Semantic Search Tools
 - `zotero_semantic_search`: AI-powered similarity search with embedding models
 - `zotero_update_search_database`: Manually update the semantic search database
 - `zotero_get_search_database_status`: Check database status and configuration
 
-### 🔍 Search Tools
+### Search Tools
 - `zotero_search_items`: Search your library by keywords
 - `zotero_advanced_search`: Perform complex searches with multiple criteria
 - `zotero_get_collections`: List collections
@@ -314,18 +317,50 @@ The first time you use PDF annotation features, the necessary tools will be auto
 - `zotero_get_recent`: Get recently added items
 - `zotero_search_by_tag`: Search your library using custom tag filters
 
-### 📚 Content Tools
+### Content Tools
 - `zotero_get_item_metadata`: Get detailed metadata (supports BibTeX export via `format="bibtex"`)
 - `zotero_get_item_fulltext`: Get full text content
 - `zotero_get_item_children`: Get attachments and notes
 
-### 📝 Annotation & Notes Tools
+### Annotation & Notes Tools
 - `zotero_get_annotations`: Get annotations (including direct PDF extraction)
 - `zotero_get_notes`: Retrieve notes from your Zotero library
 - `zotero_search_notes`: Search in notes and annotations (including PDF-extracted)
 - `zotero_create_note`: Create a new note for an item (beta feature)
 
-## 🔍 Troubleshooting
+### Write & Library Management Tools
+- Requires Web API: set `ZOTERO_LOCAL=false` and provide `ZOTERO_API_KEY` / `ZOTERO_LIBRARY_ID` (with write permissions).
+- `zotero_create_items`: Create one or more items from editable JSON
+- `zotero_update_item`: Update a single item (PATCH semantics)
+- `zotero_update_items`: Batch update items (PATCH semantics)
+- `zotero_delete_item`: Delete a single item by key
+- `zotero_delete_items`: Delete multiple items by key
+- `zotero_create_collection`: Create a collection
+- `zotero_update_collection`: Update a collection (name/parent)
+- `zotero_delete_collection`: Delete a collection by key
+- `zotero_delete_collections`: Delete multiple collections by key
+- `zotero_create_saved_search`: Create a saved search
+- `zotero_delete_saved_search`: Delete saved searches by key
+- `zotero_delete_tags`: Delete tags in bulk
+- `zotero_normalize_tags`: Normalize tags by mapping/case/trim
+- `zotero_batch_update_items`: Batch update items matching conditions
+- `zotero_collect_items`: Add items matching a query to a collection
+- `zotero_plan_tag_normalization`: Plan a staged tag normalization job
+- `zotero_apply_tag_normalization`: Apply a staged tag normalization batch
+- `zotero_resume_tag_normalization`: Resume a staged tag normalization job
+
+### Staged Tag Normalization Jobs
+Tag cleanup can be done in batches with a checkpoint file stored in `~/.config/zotero-mcp/jobs/` (30-day retention). Override the base directory with `ZOTERO_MCP_DATA_DIR`.
+
+Example flow:
+1. Plan: `zotero_plan_tag_normalization(query="foo", tag_mapping={"Foo":"foo"}, case_mode="lower")`
+2. Apply in batches: `zotero_apply_tag_normalization(job_id="...", batch_size=50)`
+3. Resume later: `zotero_resume_tag_normalization(job_id="...", batch_size=50)`
+
+Tool prompt checklist: `docs/tool-prompts.md`
+
+
+## Troubleshooting
 
 ### General Issues
 - **No results found**: Ensure Zotero is running and the local API is enabled. You need to toggle on `Allow other applications on this computer to communicate with Zotero` in Zotero preferences.
@@ -346,6 +381,6 @@ The first time you use PDF annotation features, the necessary tools will be auto
 - **Update command fails**: Check your internet connection and try `zotero-mcp update --force`
 - **Configuration lost after update**: The update process preserves configs automatically, but check `~/.config/zotero-mcp/` for backup files
 
-## 📄 License
+## License
 
 MIT
