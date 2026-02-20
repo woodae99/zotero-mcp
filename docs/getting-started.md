@@ -14,7 +14,7 @@ pip install zotero-mcp
 
 The server needs to know how to connect to your Zotero library. There are two main ways to do this:
 
-Quick guide: choose Local API for read-only workflows on the same machine. Choose Web API if you plan to create/update/delete items, collections, tags, or notes.
+Quick guide: choose Local API for fast/offline reads and full-text access, Web API for writes, or hybrid mode to combine both.
 
 ### Option 1: Local Zotero (Read-only workflows)
 
@@ -49,7 +49,36 @@ If you want to connect to your Zotero library via the web API:
    export ZOTERO_LIBRARY_TYPE=user  # or 'group' for group libraries
    ```
 
-To switch later, update your environment variables (or rerun `zotero-mcp setup --no-local` and replace your client config) to move between local and web modes.
+To switch later, update your environment variables or rerun setup in one of these modes:
+- Hybrid: `zotero-mcp setup --api-key YOUR_API_KEY --library-id YOUR_LIBRARY_ID`
+- Web-only: `zotero-mcp setup --no-local --api-key YOUR_API_KEY --library-id YOUR_LIBRARY_ID`
+
+### Option 3: Hybrid Mode (Recommended for local full-text + web writes)
+
+If your attachments/full-text are local (for example via WebDAV sync) but you also need write operations, use:
+
+```bash
+export ZOTERO_LOCAL=true
+export ZOTERO_API_KEY=your_api_key
+export ZOTERO_LIBRARY_ID=your_library_id
+export ZOTERO_LIBRARY_TYPE=user  # or 'group'
+export ZOTERO_READ_MODE=local
+export ZOTERO_WRITE_MODE=web
+# Optional: hide semantic/db MCP tools
+export ZOTERO_ENABLE_SEMANTIC_TOOLS=false
+```
+
+Equivalent setup command:
+
+```bash
+zotero-mcp setup --api-key YOUR_API_KEY --library-id YOUR_LIBRARY_ID
+```
+
+If you do not need semantic search/database tools:
+
+```bash
+zotero-mcp setup --api-key YOUR_API_KEY --library-id YOUR_LIBRARY_ID --disable-semantic-tools
+```
 
 ## Integrating with Claude Desktop
 
@@ -67,7 +96,9 @@ To use Zotero MCP with Claude Desktop:
        "zotero": {
          "command": "zotero-mcp",
          "env": {
-           "ZOTERO_LOCAL": "true"
+           "ZOTERO_LOCAL": "true",
+           "ZOTERO_READ_MODE": "local",
+           "ZOTERO_WRITE_MODE": "web"
          }
        }
      }
@@ -164,7 +195,7 @@ To set up Zotero MCP with Chorus.sh:
 
 3. **Example Environment JSON** (single line format):
    ```json
-   {"ZOTERO_LOCAL": "true"}
+   {"ZOTERO_LOCAL":"true","ZOTERO_READ_MODE":"local","ZOTERO_WRITE_MODE":"web"}
    ```
 
 Many other MCP consumers use similar configuration approaches with command path, arguments, and environment variables.
@@ -188,7 +219,7 @@ zotero-mcp --transport sse --host localhost --port 8000
 
 When connected to Claude Desktop or another MCP client, you'll have access to these tools:
 
-Note: Write tools (create/update/delete) require Web API mode with a key that has write permissions.
+Note: Write tools (create/update/delete) require Web API credentials with write permissions. In hybrid mode, writes are routed to Web API while reads/fulltext stay local.
 
 - **zotero_search_items**: Search your library by title, creator, or content
 - **zotero_get_item_metadata**: Get detailed information about a specific item
@@ -284,9 +315,9 @@ If you encounter issues:
 
 ### Local Library Limitations
 
-Some functionality will not work for local libraries due to the distinct differences with [Zotero's local JS API](https://www.zotero.org/support/dev/client_coding/javascript_api). For instance, tagging and other library modifications might not work as expected with the local API connection.
+Pure local mode is read-focused due to differences in [Zotero's local JS API](https://www.zotero.org/support/dev/client_coding/javascript_api). For create/update/delete operations, configure Web API credentials and use hybrid routing (`ZOTERO_READ_MODE=local`, `ZOTERO_WRITE_MODE=web`).
 
-**Workaround**: Even without web storage, a workaround for some of these functionalities might be to set up a web library, point the MCP at that, and then things like setting tags should work properly. We're thinking about better ways to work with local instances in future updates.
+**Workaround**: Even without Zotero web file storage, you can still enable write operations by using local attachments/fulltext plus Web API credentials for metadata writes.
 
 ### Database Issues
 
@@ -298,4 +329,4 @@ zotero-mcp update-db --force-rebuild
 
 Other than time waiting for the rebuild, there is generally little to no risk involved in triggering the rebuild - so if you're experiencing database-related issues, it's worth trying this command.
 
-For more help, try the discussions](https://github.com/54yyyu/zotero-mcp/discussions).
+For more help, try the [discussions](https://github.com/54yyyu/zotero-mcp/discussions).

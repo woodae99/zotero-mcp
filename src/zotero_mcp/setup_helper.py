@@ -375,7 +375,16 @@ def load_semantic_search_config(semantic_config_path: Path) -> dict:
         return {}
 
 
-def update_claude_config(config_path, zotero_mcp_path, local=True, api_key=None, library_id=None, library_type="user", semantic_config=None):
+def update_claude_config(
+    config_path,
+    zotero_mcp_path,
+    local=True,
+    api_key=None,
+    library_id=None,
+    library_type="user",
+    semantic_config=None,
+    semantic_tools_enabled: bool = True
+):
     """Update Claude Desktop config to add zotero-mcp."""
     # Create directory if it doesn't exist
     config_dir = config_path.parent
@@ -399,18 +408,24 @@ def update_claude_config(config_path, zotero_mcp_path, local=True, api_key=None,
         config["mcpServers"] = {}
 
     # Create environment settings based on local vs web API
+    has_web_creds = bool(api_key and library_id)
+    read_mode = "local" if local else "web"
+    write_mode = "web" if (not local or has_web_creds) else "local"
+
     env_settings = {
-        "ZOTERO_LOCAL": "true" if local else "false"
+        "ZOTERO_LOCAL": "true" if local else "false",
+        "ZOTERO_READ_MODE": read_mode,
+        "ZOTERO_WRITE_MODE": write_mode,
+        "ZOTERO_ENABLE_SEMANTIC_TOOLS": "true" if semantic_tools_enabled else "false",
     }
 
-    # Add API key and library settings for web API
-    if not local:
-        if api_key:
-            env_settings["ZOTERO_API_KEY"] = api_key
-        if library_id:
-            env_settings["ZOTERO_LIBRARY_ID"] = library_id
-        if library_type:
-            env_settings["ZOTERO_LIBRARY_TYPE"] = library_type
+    # Include Web API credentials whenever available (even in local mode)
+    if api_key:
+        env_settings["ZOTERO_API_KEY"] = api_key
+    if library_id:
+        env_settings["ZOTERO_LIBRARY_ID"] = library_id
+    if library_type:
+        env_settings["ZOTERO_LIBRARY_TYPE"] = library_type
 
     # Add semantic search settings if provided
     if semantic_config:
@@ -451,7 +466,15 @@ def update_claude_config(config_path, zotero_mcp_path, local=True, api_key=None,
     return config_path
 
 
-def _write_standalone_config(local: bool, api_key: str, library_id: str, library_type: str, semantic_config: dict, no_claude: bool = False) -> Path:
+def _write_standalone_config(
+    local: bool,
+    api_key: str,
+    library_id: str,
+    library_type: str,
+    semantic_config: dict,
+    no_claude: bool = False,
+    semantic_tools_enabled: bool = True
+) -> Path:
     """Write a central config file used by semantic search and provide client env."""
     cfg_dir = Path.home() / ".config" / "zotero-mcp"
     cfg_dir.mkdir(parents=True, exist_ok=True)
@@ -471,19 +494,24 @@ def _write_standalone_config(local: bool, api_key: str, library_id: str, library
         full["semantic_search"] = semantic_config
 
     # Provide a helper env section for web-based clients
+    has_web_creds = bool(api_key and library_id)
+    read_mode = "local" if local else "web"
+    write_mode = "web" if (not local or has_web_creds) else "local"
     client_env = {
-        "ZOTERO_LOCAL": "true" if local else "false"
+        "ZOTERO_LOCAL": "true" if local else "false",
+        "ZOTERO_READ_MODE": read_mode,
+        "ZOTERO_WRITE_MODE": write_mode,
+        "ZOTERO_ENABLE_SEMANTIC_TOOLS": "true" if semantic_tools_enabled else "false",
     }
     # Persist global guard to disable Claude detection/output if requested
     if no_claude:
         client_env["ZOTERO_NO_CLAUDE"] = "true"
-    if not local:
-        if api_key:
-            client_env["ZOTERO_API_KEY"] = api_key
-        if library_id:
-            client_env["ZOTERO_LIBRARY_ID"] = library_id
-        if library_type:
-            client_env["ZOTERO_LIBRARY_TYPE"] = library_type
+    if api_key:
+        client_env["ZOTERO_API_KEY"] = api_key
+    if library_id:
+        client_env["ZOTERO_LIBRARY_ID"] = library_id
+    if library_type:
+        client_env["ZOTERO_LIBRARY_TYPE"] = library_type
 
     full["client_env"] = client_env
 
@@ -498,15 +526,17 @@ def main(cli_args=None):
     parser = argparse.ArgumentParser(description="Configure zotero-mcp for Claude Desktop")
     parser.add_argument("--no-local", action="store_true", help="Configure for Zotero Web API instead of local API")
     parser.add_argument("--no-claude", action="store_true", help="Don't setup Claude Desktop config: instead store settings in config file.")
-    parser.add_argument("--api-key", help="Zotero API key (only needed with --no-local)")
-    parser.add_argument("--library-id", help="Zotero library ID (only needed with --no-local)")
+    parser.add_argument("--api-key", help="Zotero API key (required for web writes or web-only mode)")
+    parser.add_argument("--library-id", help="Zotero library ID (required for web writes or web-only mode)")
     parser.add_argument("--library-type", choices=["user", "group"], default="user",
-                        help="Zotero library type (only needed with --no-local)")
+                        help="Zotero library type (used with Web API credentials)")
     parser.add_argument("--config-path", help="Path to Claude Desktop config file")
     parser.add_argument("--skip-semantic-search", action="store_true",
                         help="Skip semantic search configuration")
     parser.add_argument("--semantic-config-only", action="store_true",
                         help="Only configure semantic search, skip Zotero setup")
+    parser.add_argument("--disable-semantic-tools", action="store_true",
+                        help="Disable semantic/search-database MCP tools while keeping code installed")
 
     # If this is being called from CLI with existing args
     if cli_args is not None and hasattr(cli_args, 'no_local'):
@@ -564,11 +594,18 @@ def main(cli_args=None):
 
     # Update config
     use_local = not args.no_local
-    api_key = args.api_key
-    library_id = args.library_id
-    library_type = args.library_type
+    # Allow hybrid config: local reads with web writes when credentials are available.
+    api_key = args.api_key or os.getenv("ZOTERO_API_KEY")
+    library_id = args.library_id or os.getenv("ZOTERO_LIBRARY_ID")
+    library_type = args.library_type or os.getenv("ZOTERO_LIBRARY_TYPE", "user")
+
+    semantic_tools_enabled = not bool(getattr(args, "disable_semantic_tools", False))
 
     # Configure semantic search if not skipped
+    if not semantic_tools_enabled:
+        args.skip_semantic_search = True
+        print("\nSemantic MCP tools are disabled (ZOTERO_ENABLE_SEMANTIC_TOOLS=false).")
+
     if not args.skip_semantic_search:
         # if there is already a semantic search configuration in the config file:
         if existing_semantic_config:
@@ -592,7 +629,12 @@ def main(cli_args=None):
         print(f"  Library ID: {library_id or 'Not provided'}")
         print(f"  Library Type: {library_type}")
     else:
-        print("  Note: Write tools (create/update/delete) require Web API mode (--no-local).")
+        if api_key and library_id:
+            print("  Hybrid mode: local reads/fulltext + web writes")
+            print(f"  Web Library ID: {library_id}")
+            print(f"  Web Library Type: {library_type}")
+        else:
+            print("  Note: Write tools require Web API credentials. Provide --api-key and --library-id.")
 
     # Use the potentially updated semantic config
     semantic_config = existing_semantic_config
@@ -606,7 +648,8 @@ def main(cli_args=None):
                 library_id=library_id,
                 library_type=library_type,
                 semantic_config=semantic_config,
-                no_claude=args.no_claude
+                no_claude=args.no_claude,
+                semantic_tools_enabled=semantic_tools_enabled
             )
             print("\nSetup complete (standalone/web mode)!")
             print(f"Config saved to: {cfg_path}")
@@ -619,9 +662,11 @@ def main(cli_args=None):
                 print(env_line)
             except Exception:
                 pass
-            if semantic_config_changed:
+            if semantic_tools_enabled and semantic_config_changed:
                 print("\nNote: You changed semantic search settings. Consider rebuilding the DB:")
                 print("  zotero-mcp update-db --force-rebuild")
+            elif not semantic_tools_enabled:
+                print("\nSemantic MCP tools are disabled for this client configuration.")
             return 0
         else:
             updated_config_path = update_claude_config(
@@ -631,14 +676,19 @@ def main(cli_args=None):
                 api_key=api_key,
                 library_id=library_id,
                 library_type=library_type,
-                semantic_config=semantic_config
+                semantic_config=semantic_config,
+                semantic_tools_enabled=semantic_tools_enabled
             )
             if updated_config_path:
                 print("\nSetup complete!")
                 print("To use Zotero in Claude Desktop:")
                 print("1. Restart Claude Desktop if it's running")
                 print("2. In Claude, type: /tools zotero")
-                if semantic_config_changed:
+                if not semantic_tools_enabled:
+                    print("\nSemantic Search:")
+                    print("- Semantic MCP tools are disabled by configuration")
+                    print("- Re-enable with: zotero-mcp setup --api-key ... --library-id ...")
+                elif semantic_config_changed:
                     print("\nSemantic Search:")
                     print("- Configured with", semantic_config.get("embedding_model", "default"), "embedding model")
                     print("- To change the configuration, run: zotero-mcp setup --semantic-config-only")
@@ -650,7 +700,10 @@ def main(cli_args=None):
                     print("- Use zotero_semantic_search tool in Claude for AI-powered search")
                 if use_local:
                     print("\nNote: Make sure Zotero desktop is running and the local API is enabled in preferences.")
-                    print("Write tools require Web API mode. Re-run setup with --no-local to enable them.")
+                    if api_key and library_id:
+                        print("Hybrid routing enabled: reads/fulltext use local API, writes use Web API.")
+                    else:
+                        print("Write tools require Web API credentials. Re-run setup with --api-key and --library-id.")
                 else:
                     missing = []
                     if not api_key:

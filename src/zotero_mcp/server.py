@@ -32,6 +32,12 @@ async def server_lifespan(server: FastMCP):
     """Manage server startup and shutdown lifecycle."""
     sys.stderr.write("Starting Zotero MCP server...\n")
 
+    if not _semantic_tools_enabled():
+        sys.stderr.write("Semantic MCP tools disabled by ZOTERO_ENABLE_SEMANTIC_TOOLS=false\n")
+        yield {}
+        sys.stderr.write("Shutting down Zotero MCP server...\n")
+        return
+
     # Check for semantic search auto-update on startup
     try:
         from zotero_mcp.semantic_search import create_semantic_search
@@ -65,6 +71,12 @@ async def server_lifespan(server: FastMCP):
 
 # Create an MCP server (fastmcp 2.14+ no longer accepts `dependencies`)
 mcp = FastMCP("Zotero", lifespan=server_lifespan)
+
+
+def _semantic_tools_enabled() -> bool:
+    """Return True if semantic MCP tools are enabled."""
+    value = (os.getenv("ZOTERO_ENABLE_SEMANTIC_TOOLS", "true") or "true").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 def _jobs_dir() -> Path:
     """Resolve job storage directory."""
@@ -460,7 +472,7 @@ def search_items(
             tag = []
 
         ctx.info(f"Searching Zotero for '{query}'{tag_condition_str}")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="read")
 
         if isinstance(limit, str):
             limit = int(limit)
@@ -526,7 +538,7 @@ def search_by_tag(
     ctx: Context
 ) -> str:
     """
-    Search for items in your Zotero library by tag。
+    Search for items in your Zotero library by tag
     Conditions are ANDed, each term supports disjunction`||` and exclusion`-`.
 
     Args:
@@ -551,7 +563,7 @@ def search_by_tag(
             return "Error: Tag cannot be empty"
 
         ctx.info(f"Searching Zotero for tag '{tag}'")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="read")
 
         if isinstance(limit, str):
             limit = int(limit)
@@ -629,7 +641,7 @@ def get_item_metadata(
     """
     try:
         ctx.info(f"Fetching metadata for item {item_key} in {format} format")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="read")
 
         item = zot.item(item_key)
         if not item:
@@ -666,7 +678,7 @@ def get_item_fulltext(
     """
     try:
         ctx.info(f"Fetching full text for item {item_key}")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="fulltext")
 
         # First get the item metadata
         item = zot.item(item_key)
@@ -740,7 +752,7 @@ def get_collections(
     """
     try:
         ctx.info("Fetching collections")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="read")
 
         if isinstance(limit, str):
             limit = int(limit)
@@ -835,7 +847,7 @@ def get_collection_items(
     """
     try:
         ctx.info(f"Fetching items for collection {collection_key}")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="read")
 
         # First get the collection details
         try:
@@ -903,7 +915,7 @@ def get_item_children(
     """
     try:
         ctx.info(f"Fetching children for item {item_key}")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="read")
 
         # First get the parent item details
         try:
@@ -1017,7 +1029,7 @@ def get_tags(
     """
     try:
         ctx.info("Fetching tags")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="read")
 
         if isinstance(limit, str):
             limit = int(limit)
@@ -1071,7 +1083,7 @@ def get_recent(
     """
     try:
         ctx.info(f"Fetching {limit} recent items")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="read")
 
         if isinstance(limit, str):
             limit = int(limit)
@@ -1174,7 +1186,7 @@ def batch_update_tags(
                 return f"Error: remove_tags appears to be malformed JSON string: {remove_tags}"
 
         ctx.info(f"Batch updating tags for items matching '{query}'")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
 
         if isinstance(limit, str):
             limit = int(limit)
@@ -1343,7 +1355,7 @@ def create_items(
             return f"Error: itemType missing for item(s): {', '.join(map(str, missing_types))}"
 
         ctx.info(f"Creating {len(items_list)} item(s)")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
         result = zot.create_items(items_list, parentid=parent_item_key)
 
         success = result.get("success") or result.get("successful") or {}
@@ -1408,7 +1420,7 @@ def update_item(
             return "Error: updates must be a dict or JSON string."
 
         ctx.info(f"Updating item {item_key} (full_replace={full_replace})")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
 
         item = zot.item(item_key)
         if not item:
@@ -1461,7 +1473,7 @@ def update_items(
             return "Error: items must be a list of dicts or JSON string."
 
         ctx.info(f"Batch updating {len(items)} item(s)")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
         result = zot.update_items(items)
         return f"Batch update result: {result}"
     except Exception as e:
@@ -1490,7 +1502,7 @@ def delete_item(
     """
     try:
         ctx.info(f"Deleting item {item_key}")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
         item = zot.item(item_key)
         if not item:
             return f"Error: No item found with key: {item_key}"
@@ -1534,7 +1546,7 @@ def delete_items(
             return "Error: item_keys must be a non-empty list or JSON string."
 
         ctx.info(f"Deleting {len(item_keys)} items")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
         zot.items(limit=1)
         library_version = zot.request.headers.get("last-modified-version")
         payload = [{"key": key} for key in item_keys]
@@ -1568,7 +1580,7 @@ def create_collection(
     """
     try:
         ctx.info(f"Creating collection '{name}'")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
         payload = {"name": name}
         if parent_collection_key:
             payload["parentCollection"] = parent_collection_key
@@ -1608,7 +1620,7 @@ def update_collection(
     """
     try:
         ctx.info(f"Updating collection {collection_key}")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
         coll = zot.collection(collection_key)
         if not coll:
             return f"Error: No collection found with key: {collection_key}"
@@ -1651,7 +1663,7 @@ def delete_collection(
     """
     try:
         ctx.info(f"Deleting collection {collection_key}")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
         coll = zot.collection(collection_key)
         if not coll:
             return f"Error: No collection found with key: {collection_key}"
@@ -1695,7 +1707,7 @@ def delete_collections(
             return "Error: collection_keys must be a non-empty list or JSON string."
 
         ctx.info(f"Deleting {len(collection_keys)} collections")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
         zot.collections(limit=1)
         library_version = zot.request.headers.get("last-modified-version")
         payload = [{"key": key} for key in collection_keys]
@@ -1738,7 +1750,7 @@ def create_saved_search(
             return "Error: conditions must be a list of dicts or JSON string."
 
         ctx.info(f"Creating saved search '{name}'")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
         result = zot.saved_search(name, conditions)
         success = result.get("success") or result.get("successful") or {}
         if success:
@@ -1780,7 +1792,7 @@ def delete_saved_search(
             return "Error: search_keys must be a non-empty list or JSON string."
 
         ctx.info(f"Deleting {len(search_keys)} saved search(es)")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
         result = zot.delete_saved_search(search_keys)
         return f"Delete result: {result}"
     except Exception as e:
@@ -1818,7 +1830,7 @@ def delete_tags(
             return "Error: tags must be a non-empty list or JSON string."
 
         ctx.info(f"Deleting {len(tags)} tag(s)")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
         result = zot.delete_tags(*tags)
         return f"Delete result: {result}"
     except Exception as e:
@@ -1872,7 +1884,7 @@ def normalize_tags(
             limit = int(limit)
 
         ctx.info(f"Normalizing tags for items matching '{query}' (dry_run={dry_run})")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
         zot.add_parameters(q=query, itemType="-attachment", limit=limit)
         items = zot.items()
 
@@ -1977,7 +1989,7 @@ def plan_tag_normalization(
             limit = int(limit)
 
         ctx.info(f"Planning tag normalization for '{query}'")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="read")
         zot.add_parameters(q=query, itemType="-attachment", limit=limit)
         items = zot.items()
 
@@ -2094,7 +2106,7 @@ def apply_tag_normalization(
         trim_whitespace = bool(job.get("trim_whitespace", True))
 
         ctx.info(f"Applying tag normalization job {job_id} (dry_run={dry_run})")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
 
         updated_count = 0
         skipped_count = 0
@@ -2251,7 +2263,7 @@ def batch_update_items(
             limit = int(limit)
 
         ctx.info(f"Batch updating items (dry_run={dry_run})")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
 
         try:
             search_conditions = _normalize_advanced_conditions(
@@ -2362,7 +2374,7 @@ def collect_items(
             limit = int(limit)
 
         ctx.info(f"Collecting items matching '{query}' into {collection_key} (dry_run={dry_run})")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
         zot.add_parameters(q=query, itemType="-attachment", limit=limit)
         items = zot.items()
 
@@ -2458,7 +2470,7 @@ def advanced_search(
             return "Error: No search conditions provided"
 
         ctx.info(f"Performing advanced search with {len(conditions)} conditions")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
 
         # Prepare search parameters
         params = {}
@@ -2506,7 +2518,7 @@ def advanced_search(
 
         # Execute the saved search
         try:
-            zot.add_parameters(searchKey=search_key)
+            zot.add_parameters(searchKey=search_key, **params)
             results = zot.items()
         finally:
             # Clean up the temporary saved search
@@ -2599,7 +2611,7 @@ def get_annotations(
     """
     try:
         # Initialize Zotero client
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="read")
 
         # Prepare annotations list
         annotations = []
@@ -2902,7 +2914,7 @@ def get_notes(
     """
     try:
         ctx.info(f"Fetching notes{f' for item {item_key}' if item_key else ''}")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="read")
 
         # Prepare search parameters
         params = {"itemType": "note"}
@@ -2992,7 +3004,7 @@ def search_notes(
             return "Error: Search query cannot be empty"
 
         ctx.info(f"Searching Zotero notes for '{query}'")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="read")
 
         # Search for notes and annotations
 
@@ -3126,7 +3138,7 @@ def search_notes(
 def create_note(
     item_key: str,
     note_text: str,
-    tags: list[str] | None = None,
+    tags: list[str] | str | None = None,
     *,
     ctx: Context
 ) -> str:
@@ -3144,7 +3156,16 @@ def create_note(
     """
     try:
         ctx.info(f"Creating note for item {item_key}")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
+
+        if tags and isinstance(tags, str):
+            try:
+                tags = json.loads(tags)
+            except json.JSONDecodeError:
+                tags = [tags]
+
+        if tags is not None and not isinstance(tags, list):
+            return "Error: tags must be a list, JSON list string, or null."
 
         # First verify the parent item exists
         try:
@@ -3194,269 +3215,270 @@ def create_note(
         return f"Error creating note: {str(e)}"
 
 
-@mcp.tool(
-    name="zotero_semantic_search",
-    description="Prioritized search tool. Perform semantic search over your Zotero library using AI-powered embeddings."
-)
-def semantic_search(
-    query: str,
-    limit: int = 10,
-    filters: dict[str, str] | str | None = None,
-    *,
-    ctx: Context
-) -> str:
-    """
-    Perform semantic search over your Zotero library.
+if _semantic_tools_enabled():
+    @mcp.tool(
+        name="zotero_semantic_search",
+        description="Prioritized search tool. Perform semantic search over your Zotero library using AI-powered embeddings."
+    )
+    def semantic_search(
+        query: str,
+        limit: int = 10,
+        filters: dict[str, str] | str | None = None,
+        *,
+        ctx: Context
+    ) -> str:
+        """
+        Perform semantic search over your Zotero library.
 
-    Args:
-        query: Search query text - can be concepts, topics, or natural language descriptions
-        limit: Maximum number of results to return (default: 10)
-        filters: Optional metadata filters as dict or JSON string. Example: {"item_type": "note"}
-        ctx: MCP context
+        Args:
+            query: Search query text - can be concepts, topics, or natural language descriptions
+            limit: Maximum number of results to return (default: 10)
+            filters: Optional metadata filters as dict or JSON string. Example: {"item_type": "note"}
+            ctx: MCP context
 
-    Returns:
-        Markdown-formatted search results with similarity scores
-    """
-    try:
-        if not query.strip():
-            return "Error: Search query cannot be empty"
+        Returns:
+            Markdown-formatted search results with similarity scores
+        """
+        try:
+            if not query.strip():
+                return "Error: Search query cannot be empty"
 
-        # Parse and validate filters parameter
-        if filters is not None:
-            # Handle JSON string input
-            if isinstance(filters, str):
-                try:
-                    filters = json.loads(filters)
-                    ctx.info(f"Parsed JSON string filters: {filters}")
-                except json.JSONDecodeError as e:
-                    return f"Error: Invalid JSON in filters parameter: {str(e)}"
+            # Parse and validate filters parameter
+            if filters is not None:
+                # Handle JSON string input
+                if isinstance(filters, str):
+                    try:
+                        filters = json.loads(filters)
+                        ctx.info(f"Parsed JSON string filters: {filters}")
+                    except json.JSONDecodeError as e:
+                        return f"Error: Invalid JSON in filters parameter: {str(e)}"
 
-            # Validate it's a dictionary
-            if not isinstance(filters, dict):
-                return "Error: filters parameter must be a dictionary or JSON string. Example: {\"item_type\": \"note\"}"
+                # Validate it's a dictionary
+                if not isinstance(filters, dict):
+                    return "Error: filters parameter must be a dictionary or JSON string. Example: {\"item_type\": \"note\"}"
 
-            # Automatically translate common field names
-            if "itemType" in filters:
-                filters["item_type"] = filters.pop("itemType")
-                ctx.info(f"Automatically translated 'itemType' to 'item_type': {filters}")
+                # Automatically translate common field names
+                if "itemType" in filters:
+                    filters["item_type"] = filters.pop("itemType")
+                    ctx.info(f"Automatically translated 'itemType' to 'item_type': {filters}")
 
-            # Additional field name translations can be added here
-            # Example: if "creatorType" in filters:
-            #     filters["creator_type"] = filters.pop("creatorType")
+                # Additional field name translations can be added here
+                # Example: if "creatorType" in filters:
+                #     filters["creator_type"] = filters.pop("creatorType")
 
-        ctx.info(f"Performing semantic search for: '{query}'")
+            ctx.info(f"Performing semantic search for: '{query}'")
 
-        # Import semantic search module
-        from zotero_mcp.semantic_search import create_semantic_search
-        from pathlib import Path
+            # Import semantic search module
+            from zotero_mcp.semantic_search import create_semantic_search
+            from pathlib import Path
 
-        # Determine config path
-        config_path = Path.home() / ".config" / "zotero-mcp" / "config.json"
+            # Determine config path
+            config_path = Path.home() / ".config" / "zotero-mcp" / "config.json"
 
-        # Create semantic search instance
-        search = create_semantic_search(str(config_path))
+            # Create semantic search instance
+            search = create_semantic_search(str(config_path))
 
-        # Perform search
-        results = search.search(query=query, limit=limit, filters=filters)
+            # Perform search
+            results = search.search(query=query, limit=limit, filters=filters)
 
-        if results.get("error"):
-            return f"Semantic search error: {results['error']}"
+            if results.get("error"):
+                return f"Semantic search error: {results['error']}"
 
-        search_results = results.get("results", [])
+            search_results = results.get("results", [])
 
-        if not search_results:
-            return f"No semantically similar items found for query: '{query}'"
+            if not search_results:
+                return f"No semantically similar items found for query: '{query}'"
 
-        # Format results as markdown
-        output = [f"# Semantic Search Results for '{query}'", ""]
-        output.append(f"Found {len(search_results)} similar items:")
-        output.append("")
+            # Format results as markdown
+            output = [f"# Semantic Search Results for '{query}'", ""]
+            output.append(f"Found {len(search_results)} similar items:")
+            output.append("")
 
-        for i, result in enumerate(search_results, 1):
-            similarity_score = result.get("similarity_score", 0)
-            _ = result.get("metadata", {})
-            zotero_item = result.get("zotero_item", {})
+            for i, result in enumerate(search_results, 1):
+                similarity_score = result.get("similarity_score", 0)
+                _ = result.get("metadata", {})
+                zotero_item = result.get("zotero_item", {})
 
-            if zotero_item:
-                data = zotero_item.get("data", {})
-                title = data.get("title", "Untitled")
-                item_type = data.get("itemType", "unknown")
-                key = result.get("item_key", "")
+                if zotero_item:
+                    data = zotero_item.get("data", {})
+                    title = data.get("title", "Untitled")
+                    item_type = data.get("itemType", "unknown")
+                    key = result.get("item_key", "")
 
-                # Format creators
-                creators = data.get("creators", [])
-                creators_str = format_creators(creators)
+                    # Format creators
+                    creators = data.get("creators", [])
+                    creators_str = format_creators(creators)
 
-                output.append(f"## {i}. {title}")
-                output.append(f"**Similarity Score:** {similarity_score:.3f}")
-                output.append(f"**Type:** {item_type}")
-                output.append(f"**Item Key:** {key}")
-                output.append(f"**Authors:** {creators_str}")
+                    output.append(f"## {i}. {title}")
+                    output.append(f"**Similarity Score:** {similarity_score:.3f}")
+                    output.append(f"**Type:** {item_type}")
+                    output.append(f"**Item Key:** {key}")
+                    output.append(f"**Authors:** {creators_str}")
 
-                # Add date if available
-                if date := data.get("date"):
-                    output.append(f"**Date:** {date}")
+                    # Add date if available
+                    if date := data.get("date"):
+                        output.append(f"**Date:** {date}")
 
-                # Add abstract snippet if present
-                if abstract := data.get("abstractNote"):
-                    abstract_snippet = abstract[:200] + "..." if len(abstract) > 200 else abstract
-                    output.append(f"**Abstract:** {abstract_snippet}")
+                    # Add abstract snippet if present
+                    if abstract := data.get("abstractNote"):
+                        abstract_snippet = abstract[:200] + "..." if len(abstract) > 200 else abstract
+                        output.append(f"**Abstract:** {abstract_snippet}")
 
-                # Add tags if present
-                if tags := data.get("tags"):
-                    tag_list = [f"`{tag['tag']}`" for tag in tags]
-                    if tag_list:
-                        output.append(f"**Tags:** {' '.join(tag_list)}")
+                    # Add tags if present
+                    if tags := data.get("tags"):
+                        tag_list = [f"`{tag['tag']}`" for tag in tags]
+                        if tag_list:
+                            output.append(f"**Tags:** {' '.join(tag_list)}")
 
-                # Show matched text snippet
-                matched_text = result.get("matched_text", "")
-                if matched_text:
-                    snippet = matched_text[:300] + "..." if len(matched_text) > 300 else matched_text
-                    output.append(f"**Matched Content:** {snippet}")
+                    # Show matched text snippet
+                    matched_text = result.get("matched_text", "")
+                    if matched_text:
+                        snippet = matched_text[:300] + "..." if len(matched_text) > 300 else matched_text
+                        output.append(f"**Matched Content:** {snippet}")
 
-                output.append("")  # Empty line between items
+                    output.append("")  # Empty line between items
+                else:
+                    # Fallback if full Zotero item not available
+                    output.append(f"## {i}. Item {result.get('item_key', 'Unknown')}")
+                    output.append(f"**Similarity Score:** {similarity_score:.3f}")
+                    if error := result.get("error"):
+                        output.append(f"**Error:** {error}")
+                    output.append("")
+
+            return "\n".join(output)
+
+        except Exception as e:
+            ctx.error(f"Error in semantic search: {str(e)}")
+            return f"Error in semantic search: {str(e)}"
+
+
+    @mcp.tool(
+        name="zotero_update_search_database",
+        description="Update the semantic search database with latest Zotero items."
+    )
+    def update_search_database(
+        force_rebuild: bool = False,
+        limit: int | None = None,
+        *,
+        ctx: Context
+    ) -> str:
+        """
+        Update the semantic search database.
+
+        Args:
+            force_rebuild: Whether to rebuild the entire database from scratch
+            limit: Limit number of items to process (useful for testing)
+            ctx: MCP context
+
+        Returns:
+            Update status and statistics
+        """
+        try:
+            ctx.info("Starting semantic search database update...")
+
+            # Import semantic search module
+            from zotero_mcp.semantic_search import create_semantic_search
+            from pathlib import Path
+
+            # Determine config path
+            config_path = Path.home() / ".config" / "zotero-mcp" / "config.json"
+
+            # Create semantic search instance
+            search = create_semantic_search(str(config_path))
+
+            # Perform update with no fulltext extraction (for speed)
+            stats = search.update_database(
+                force_full_rebuild=force_rebuild,
+                limit=limit,
+                extract_fulltext=False
+            )
+
+            # Format results
+            output = ["# Database Update Results", ""]
+
+            if stats.get("error"):
+                output.append(f"**Error:** {stats['error']}")
             else:
-                # Fallback if full Zotero item not available
-                output.append(f"## {i}. Item {result.get('item_key', 'Unknown')}")
-                output.append(f"**Similarity Score:** {similarity_score:.3f}")
-                if error := result.get("error"):
-                    output.append(f"**Error:** {error}")
-                output.append("")
+                output.append(f"**Total items:** {stats.get('total_items', 0)}")
+                output.append(f"**Processed:** {stats.get('processed_items', 0)}")
+                output.append(f"**Added:** {stats.get('added_items', 0)}")
+                output.append(f"**Updated:** {stats.get('updated_items', 0)}")
+                output.append(f"**Skipped:** {stats.get('skipped_items', 0)}")
+                output.append(f"**Errors:** {stats.get('errors', 0)}")
+                output.append(f"**Duration:** {stats.get('duration', 'Unknown')}")
 
-        return "\n".join(output)
+                if stats.get('start_time'):
+                    output.append(f"**Started:** {stats['start_time']}")
+                if stats.get('end_time'):
+                    output.append(f"**Completed:** {stats['end_time']}")
 
-    except Exception as e:
-        ctx.error(f"Error in semantic search: {str(e)}")
-        return f"Error in semantic search: {str(e)}"
+            return "\n".join(output)
 
-
-@mcp.tool(
-    name="zotero_update_search_database",
-    description="Update the semantic search database with latest Zotero items."
-)
-def update_search_database(
-    force_rebuild: bool = False,
-    limit: int | None = None,
-    *,
-    ctx: Context
-) -> str:
-    """
-    Update the semantic search database.
-
-    Args:
-        force_rebuild: Whether to rebuild the entire database from scratch
-        limit: Limit number of items to process (useful for testing)
-        ctx: MCP context
-
-    Returns:
-        Update status and statistics
-    """
-    try:
-        ctx.info("Starting semantic search database update...")
-
-        # Import semantic search module
-        from zotero_mcp.semantic_search import create_semantic_search
-        from pathlib import Path
-
-        # Determine config path
-        config_path = Path.home() / ".config" / "zotero-mcp" / "config.json"
-
-        # Create semantic search instance
-        search = create_semantic_search(str(config_path))
-
-        # Perform update with no fulltext extraction (for speed)
-        stats = search.update_database(
-            force_full_rebuild=force_rebuild,
-            limit=limit,
-            extract_fulltext=False
-        )
-
-        # Format results
-        output = ["# Database Update Results", ""]
-
-        if stats.get("error"):
-            output.append(f"**Error:** {stats['error']}")
-        else:
-            output.append(f"**Total items:** {stats.get('total_items', 0)}")
-            output.append(f"**Processed:** {stats.get('processed_items', 0)}")
-            output.append(f"**Added:** {stats.get('added_items', 0)}")
-            output.append(f"**Updated:** {stats.get('updated_items', 0)}")
-            output.append(f"**Skipped:** {stats.get('skipped_items', 0)}")
-            output.append(f"**Errors:** {stats.get('errors', 0)}")
-            output.append(f"**Duration:** {stats.get('duration', 'Unknown')}")
-
-            if stats.get('start_time'):
-                output.append(f"**Started:** {stats['start_time']}")
-            if stats.get('end_time'):
-                output.append(f"**Completed:** {stats['end_time']}")
-
-        return "\n".join(output)
-
-    except Exception as e:
-        ctx.error(f"Error updating search database: {str(e)}")
-        return f"Error updating search database: {str(e)}"
+        except Exception as e:
+            ctx.error(f"Error updating search database: {str(e)}")
+            return f"Error updating search database: {str(e)}"
 
 
-@mcp.tool(
-    name="zotero_get_search_database_status",
-    description="Get status information about the semantic search database."
-)
-def get_search_database_status(*, ctx: Context) -> str:
-    """
-    Get semantic search database status.
+    @mcp.tool(
+        name="zotero_get_search_database_status",
+        description="Get status information about the semantic search database."
+    )
+    def get_search_database_status(*, ctx: Context) -> str:
+        """
+        Get semantic search database status.
 
-    Args:
-        ctx: MCP context
+        Args:
+            ctx: MCP context
 
-    Returns:
-        Database status information
-    """
-    try:
-        ctx.info("Getting semantic search database status...")
+        Returns:
+            Database status information
+        """
+        try:
+            ctx.info("Getting semantic search database status...")
 
-        # Import semantic search module
-        from zotero_mcp.semantic_search import create_semantic_search
-        from pathlib import Path
+            # Import semantic search module
+            from zotero_mcp.semantic_search import create_semantic_search
+            from pathlib import Path
 
-        # Determine config path
-        config_path = Path.home() / ".config" / "zotero-mcp" / "config.json"
+            # Determine config path
+            config_path = Path.home() / ".config" / "zotero-mcp" / "config.json"
 
-        # Create semantic search instance
-        search = create_semantic_search(str(config_path))
+            # Create semantic search instance
+            search = create_semantic_search(str(config_path))
 
-        # Get status
-        status = search.get_database_status()
+            # Get status
+            status = search.get_database_status()
 
-        # Format results
-        output = ["# Semantic Search Database Status", ""]
+            # Format results
+            output = ["# Semantic Search Database Status", ""]
 
-        collection_info = status.get("collection_info", {})
-        output.append("## Collection Information")
-        output.append(f"**Name:** {collection_info.get('name', 'Unknown')}")
-        output.append(f"**Document Count:** {collection_info.get('count', 0)}")
-        output.append(f"**Embedding Model:** {collection_info.get('embedding_model', 'Unknown')}")
-        output.append(f"**Database Path:** {collection_info.get('persist_directory', 'Unknown')}")
+            collection_info = status.get("collection_info", {})
+            output.append("## Collection Information")
+            output.append(f"**Name:** {collection_info.get('name', 'Unknown')}")
+            output.append(f"**Document Count:** {collection_info.get('count', 0)}")
+            output.append(f"**Embedding Model:** {collection_info.get('embedding_model', 'Unknown')}")
+            output.append(f"**Database Path:** {collection_info.get('persist_directory', 'Unknown')}")
 
-        if collection_info.get('error'):
-            output.append(f"**Error:** {collection_info['error']}")
+            if collection_info.get('error'):
+                output.append(f"**Error:** {collection_info['error']}")
 
-        output.append("")
+            output.append("")
 
-        update_config = status.get("update_config", {})
-        output.append("## Update Configuration")
-        output.append(f"**Auto Update:** {update_config.get('auto_update', False)}")
-        output.append(f"**Frequency:** {update_config.get('update_frequency', 'manual')}")
-        output.append(f"**Last Update:** {update_config.get('last_update', 'Never')}")
-        output.append(f"**Should Update Now:** {status.get('should_update', False)}")
+            update_config = status.get("update_config", {})
+            output.append("## Update Configuration")
+            output.append(f"**Auto Update:** {update_config.get('auto_update', False)}")
+            output.append(f"**Frequency:** {update_config.get('update_frequency', 'manual')}")
+            output.append(f"**Last Update:** {update_config.get('last_update', 'Never')}")
+            output.append(f"**Should Update Now:** {status.get('should_update', False)}")
 
-        if update_config.get('update_days'):
-            output.append(f"**Update Interval:** Every {update_config['update_days']} days")
+            if update_config.get('update_days'):
+                output.append(f"**Update Interval:** Every {update_config['update_days']} days")
 
-        return "\n".join(output)
+            return "\n".join(output)
 
-    except Exception as e:
-        ctx.error(f"Error getting database status: {str(e)}")
-        return f"Error getting database status: {str(e)}"
+        except Exception as e:
+            ctx.error(f"Error getting database status: {str(e)}")
+            return f"Error getting database status: {str(e)}"
 
 
 # --- Minimal wrappers for ChatGPT connectors ---
@@ -3491,7 +3513,7 @@ def _extract_item_key_from_input(value: str) -> str | None:
 
 @mcp.tool(
     name="search",
-    description="ChatGPT-compatible search wrapper. Performs semantic search and returns JSON results."
+    description="ChatGPT-compatible search wrapper. Uses semantic search when enabled, otherwise falls back to Zotero metadata search."
 )
 def chatgpt_connector_search(
     query: str,
@@ -3505,27 +3527,49 @@ def chatgpt_connector_search(
     try:
         default_limit = 10
 
-        from zotero_mcp.semantic_search import create_semantic_search
-
-        config_path = Path.home() / ".config" / "zotero-mcp" / "config.json"
-        search = create_semantic_search(str(config_path))
-
         result_list: list[dict[str, str]] = []
-        results = search.search(query=query, limit=default_limit, filters=None) or {}
-        for r in results.get("results", []):
-            item_key = r.get("item_key") or ""
-            title = ""
-            if r.get("zotero_item"):
-                data = (r.get("zotero_item") or {}).get("data", {})
-                title = data.get("title", "")
-            if not title:
-                title = f"Zotero Item {item_key}" if item_key else "Zotero Item"
-            url = f"zotero://select/items/{item_key}" if item_key else ""
-            result_list.append({
-                "id": item_key or uuid.uuid4().hex[:8],
-                "title": title,
-                "url": url,
-            })
+
+        if _semantic_tools_enabled():
+            from zotero_mcp.semantic_search import create_semantic_search
+
+            config_path = Path.home() / ".config" / "zotero-mcp" / "config.json"
+            search = create_semantic_search(str(config_path))
+
+            results = search.search(query=query, limit=default_limit, filters=None) or {}
+            for r in results.get("results", []):
+                item_key = r.get("item_key") or ""
+                title = ""
+                if r.get("zotero_item"):
+                    data = (r.get("zotero_item") or {}).get("data", {})
+                    title = data.get("title", "")
+                if not title:
+                    title = f"Zotero Item {item_key}" if item_key else "Zotero Item"
+                url = f"zotero://select/items/{item_key}" if item_key else ""
+                result_list.append({
+                    "id": item_key or uuid.uuid4().hex[:8],
+                    "title": title,
+                    "url": url,
+                })
+        else:
+            # Fallback to regular Zotero search when semantic tools are disabled.
+            zot = get_zotero_client(operation="read")
+            zot.add_parameters(
+                q=query,
+                qmode="titleCreatorYear",
+                itemType="-attachment",
+                limit=default_limit
+            )
+            items = zot.items() or []
+            for item in items:
+                data = item.get("data", {})
+                item_key = item.get("key", "")
+                title = data.get("title", "") or (f"Zotero Item {item_key}" if item_key else "Zotero Item")
+                url = f"zotero://select/items/{item_key}" if item_key else ""
+                result_list.append({
+                    "id": item_key or uuid.uuid4().hex[:8],
+                    "title": title,
+                    "url": url,
+                })
 
         return json.dumps({"results": result_list}, separators=(",", ":"))
     except Exception as e:
@@ -3558,7 +3602,7 @@ def connector_fetch(
             }, separators=(",", ":"))
 
         # Fetch item metadata for title and context
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="fulltext")
         try:
             item = zot.item(item_key)
             data = item.get("data", {}) if item else {}

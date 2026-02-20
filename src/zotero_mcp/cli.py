@@ -143,6 +143,8 @@ def setup_zotero_environment():
     fallback_env_vars = {
         "ZOTERO_LOCAL": "true",
         "ZOTERO_LIBRARY_ID": "0",
+        "ZOTERO_READ_MODE": "local",
+        "ZOTERO_WRITE_MODE": "local",
     }
     # Apply fallbacks only if not already set
     apply_environment_variables(fallback_env_vars)
@@ -181,10 +183,10 @@ def main():
     setup_parser = subparsers.add_parser("setup", help="Configure zotero-mcp (Claude Desktop or standalone)")
     setup_parser.add_argument("--no-local", action="store_true",
                              help="Configure for Zotero Web API instead of local API")
-    setup_parser.add_argument("--api-key", help="Zotero API key (only needed with --no-local)")
-    setup_parser.add_argument("--library-id", help="Zotero library ID (only needed with --no-local)")
+    setup_parser.add_argument("--api-key", help="Zotero API key (required for web writes or web-only mode)")
+    setup_parser.add_argument("--library-id", help="Zotero library ID (required for web writes or web-only mode)")
     setup_parser.add_argument("--library-type", choices=["user", "group"], default="user",
-                             help="Zotero library type (only needed with --no-local)")
+                             help="Zotero library type (used with Web API credentials)")
     setup_parser.add_argument("--no-claude", action="store_true",
                              help="Skip Claude Desktop config; write standalone config for web-based clients")
     setup_parser.add_argument("--config-path", help="Path to Claude Desktop config file")
@@ -192,6 +194,8 @@ def main():
                              help="Skip semantic search configuration")
     setup_parser.add_argument("--semantic-config-only", action="store_true",
                              help="Only configure semantic search, skip Zotero setup")
+    setup_parser.add_argument("--disable-semantic-tools", action="store_true",
+                             help="Disable semantic/search-database MCP tools while keeping code installed")
 
     # Update database command
     update_db_parser = subparsers.add_parser("update-db", help="Update semantic search database")
@@ -268,7 +272,7 @@ def main():
 
         print("=== Zotero MCP Setup Information ===")
         print()
-        print("🔧 Installation Details:")
+        print("Installation Details:")
         print(f"  Command path: {executable_path}")
         print(f"  Python path: {sys.executable}")
 
@@ -290,14 +294,14 @@ def main():
             print("  Installation method: unknown")
 
         print()
-        print("⚙️  MCP Client Configuration:")
+        print("MCP Client Configuration:")
         print(f"  Command: {executable_path}")
         print("  Arguments: [] (empty)")
 
         # Show environment variables with obfuscated sensitive values
         obfuscated_env_vars = obfuscate_config_for_display(display_env)
         print(f"  Environment (single-line): {json.dumps(obfuscated_env_vars, separators=(',', ':'))}")
-        print("  💡 Note: This shows client config. Shell variables may override for CLI use.")
+        print("  Note: This shows client config. Shell variables may override for CLI use.")
         print(f"  Claude integration: {'disabled' if no_claude else 'enabled'}")
 
         # Only show Claude Desktop config if not globally disabled
@@ -316,7 +320,7 @@ def main():
 
         # Show semantic search database info with detailed statistics
         print()
-        print("🧠 Semantic Search Database:")
+        print("Semantic Search Database:")
 
         # Check for semantic search config
         config_path = Path.home() / ".config" / "zotero-mcp" / "config.json"
@@ -330,7 +334,7 @@ def main():
 
                 collection_info = status.get("collection_info", {})
 
-                print("  Status: ✅ Configuration file found")
+                print("  Status: OK - Configuration file found")
                 print(f"  Config path: {config_path}")
                 print(f"  Collection: {collection_info.get('name', 'Unknown')}")
                 print(f"  Document count: {collection_info.get('count', 0)}")
@@ -347,11 +351,11 @@ def main():
                     print(f"  Error: {collection_info['error']}")
 
             except Exception as e:
-                print("  Status: ⚠️ Configuration found but database error")
+                print("  Status: WARNING - Configuration found but database error")
                 print(f"  Error: {e}")
         else:
-            print("  Status: ⚠️ Not configured")
-            print("  💡 Run 'zotero-mcp setup' to configure semantic search")
+            print("  Status: WARNING - Not configured")
+            print("  Run 'zotero-mcp setup' to configure semantic search")
 
         sys.exit(0)
 
@@ -578,28 +582,28 @@ def main():
                 print(f"Status: {result.get('message', 'Unknown')}")
             else:
                 if result.get('success'):
-                    print("✅ Update completed successfully!")
-                    print(f"Version: {result.get('current_version', 'Unknown')} → {result.get('latest_version', 'Unknown')}")
+                    print("Update completed successfully!")
+                    print(f"Version: {result.get('current_version', 'Unknown')} -> {result.get('latest_version', 'Unknown')}")
                     print(f"Method: {result.get('method', 'Unknown')}")
                     print(f"Message: {result.get('message', '')}")
 
-                    print("\n📋 Next steps:")
-                    print("• All configurations have been preserved")
-                    print("• Restart Claude Desktop if it's running")
-                    print("• Your semantic search database is intact")
-                    print("• Run 'zotero-mcp version' to verify the update")
+                    print("\nNext steps:")
+                    print("- All configurations have been preserved")
+                    print("- Restart Claude Desktop if it's running")
+                    print("- Your semantic search database is intact")
+                    print("- Run 'zotero-mcp version' to verify the update")
                 else:
-                    print("❌ Update failed!")
+                    print("Update failed.")
                     print(f"Error: {result.get('message', 'Unknown error')}")
 
                     if backup_dir := result.get('backup_dir'):
-                        print(f"\n🔄 Backup created at: {backup_dir}")
+                        print(f"\nBackup created at: {backup_dir}")
                         print("You can manually restore configurations if needed")
 
                     sys.exit(1)
 
         except Exception as e:
-            print(f"❌ Update error: {e}")
+            print(f"Update error: {e}")
             sys.exit(1)
 
     elif args.command == "serve":

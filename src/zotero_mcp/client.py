@@ -5,7 +5,7 @@ Zotero client wrapper for MCP server.
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Literal
 
 from dotenv import load_dotenv
 from markitdown import MarkItDown
@@ -15,6 +15,80 @@ from zotero_mcp.utils import format_creators
 
 # Load environment variables
 load_dotenv()
+
+
+def _is_truthy(value: str | None) -> bool:
+    """Parse common truthy environment variable values."""
+    if value is None:
+        return False
+    return value.strip().lower() in {"true", "yes", "1", "on"}
+
+
+def _web_config_available() -> bool:
+    """Return True when required Web API configuration is present."""
+    return bool(os.getenv("ZOTERO_LIBRARY_ID") and os.getenv("ZOTERO_API_KEY"))
+
+
+def _create_local_client() -> zotero.Zotero:
+    """Create a client bound to the local Zotero API."""
+    library_type = os.getenv("ZOTERO_LIBRARY_TYPE", "user")
+    library_id = os.getenv("ZOTERO_LOCAL_LIBRARY_ID") or os.getenv("ZOTERO_LIBRARY_ID") or "0"
+    return zotero.Zotero(
+        library_id=library_id,
+        library_type=library_type,
+        api_key=None,
+        local=True,
+    )
+
+
+def _create_web_client() -> zotero.Zotero:
+    """Create a client bound to Zotero Web API."""
+    library_id = os.getenv("ZOTERO_LIBRARY_ID")
+    library_type = os.getenv("ZOTERO_LIBRARY_TYPE", "user")
+    api_key = os.getenv("ZOTERO_API_KEY")
+
+    if not (library_id and api_key):
+        raise ValueError(
+            "Missing required web configuration. Set ZOTERO_LIBRARY_ID and ZOTERO_API_KEY."
+        )
+
+    return zotero.Zotero(
+        library_id=library_id,
+        library_type=library_type,
+        api_key=api_key,
+        local=False,
+    )
+
+
+def _resolve_client_mode(operation: Literal["read", "fulltext", "write"]) -> Literal["local", "web"]:
+    """Resolve local vs web routing for an operation."""
+    read_mode = (os.getenv("ZOTERO_READ_MODE", "auto") or "auto").strip().lower()
+    write_mode = (os.getenv("ZOTERO_WRITE_MODE", "auto") or "auto").strip().lower()
+
+    local_enabled = _is_truthy(os.getenv("ZOTERO_LOCAL"))
+    web_available = _web_config_available()
+
+    if operation in {"read", "fulltext"}:
+        if read_mode == "local":
+            return "local"
+        if read_mode == "web":
+            return "web"
+        # auto: prefer local for speed/offline/fulltext when available
+        if local_enabled:
+            return "local"
+        return "web"
+
+    # write operation
+    if write_mode == "web":
+        return "web"
+    if write_mode == "local":
+        return "local"
+    # auto: prefer web when credentials exist because local endpoint is read-only
+    if web_available:
+        return "web"
+    if local_enabled:
+        return "local"
+    return "web"
 
 
 @dataclass
@@ -27,9 +101,14 @@ class AttachmentDetails:
     content_type: str
 
 
-def get_zotero_client() -> zotero.Zotero:
+def get_zotero_client(operation: Literal["read", "fulltext", "write"] = "read") -> zotero.Zotero:
     """
-    Get authenticated Zotero client using environment variables.
+    Get an authenticated Zotero client using operation-aware routing.
+
+    Routing:
+    - Reads/fulltext default to local API when ZOTERO_LOCAL=true (or ZOTERO_READ_MODE=local)
+    - Writes default to Web API when credentials are present (or ZOTERO_WRITE_MODE=web)
+    - Both can be overridden with ZOTERO_READ_MODE / ZOTERO_WRITE_MODE (local|web|auto)
 
     Returns:
         A configured Zotero client instance.
@@ -37,28 +116,10 @@ def get_zotero_client() -> zotero.Zotero:
     Raises:
         ValueError: If required environment variables are missing.
     """
-    library_id = os.getenv("ZOTERO_LIBRARY_ID")
-    library_type = os.getenv("ZOTERO_LIBRARY_TYPE", "user")
-    api_key = os.getenv("ZOTERO_API_KEY")
-    local = os.getenv("ZOTERO_LOCAL", "").lower() in ["true", "yes", "1"]
-
-    # For local API, default to user ID 0 if not specified
-    if local and not library_id:
-        library_id = "0"
-
-    # For remote API, we need both library_id and api_key
-    if not local and not (library_id and api_key):
-        raise ValueError(
-            "Missing required environment variables. Please set ZOTERO_LIBRARY_ID and ZOTERO_API_KEY, "
-            "or use ZOTERO_LOCAL=true for local Zotero instance."
-        )
-
-    return zotero.Zotero(
-        library_id=library_id,
-        library_type=library_type,
-        api_key=api_key,
-        local=local,
-    )
+    mode = _resolve_client_mode(operation)
+    if mode == "local":
+        return _create_local_client()
+    return _create_web_client()
 
 
 def format_item_metadata(item: dict[str, Any], include_abstract: bool = True) -> str:

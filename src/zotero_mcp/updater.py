@@ -396,7 +396,7 @@ def update_zotero_mcp(check_only: bool = False,
 
     if check_only:
         if needs_update:
-            result["message"] = f"Update available: {current_version} → {latest_version}"
+            result["message"] = f"Update available: {current_version} -> {latest_version}"
         else:
             result["message"] = f"Already up to date (version {current_version})"
         result["success"] = True

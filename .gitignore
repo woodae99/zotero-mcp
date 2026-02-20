@@ -37,3 +37,7 @@ Thumbs.db
 .env
 *.env
 .env.local
+
+# OpenMemory - IDE/Assistant specific rules
+AGENTS.md
+AGENTS.md

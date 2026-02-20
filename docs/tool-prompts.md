@@ -2,6 +2,11 @@
 
 Use the prompts below with a local LLM to exercise each tool. Replace placeholders like `<ITEM_KEY>` as needed.
 
+Write-tool prerequisite:
+- For create/update/delete tools, configure either Web-only mode or hybrid mode (`ZOTERO_LOCAL=true` with `ZOTERO_API_KEY` and `ZOTERO_LIBRARY_ID`).
+Semantic-tool note:
+- If `ZOTERO_ENABLE_SEMANTIC_TOOLS=false`, semantic/database tools are intentionally hidden and related prompts should be skipped.
+
 | Tool | Prompt | Notes |
 | --- | --- | --- |
 | zotero_search_items | Search my Zotero library for the phrase "MCP Seed" and return up to 5 results. |  |
@@ -18,7 +23,7 @@ Use the prompts below with a local LLM to exercise each tool. Replace placeholde
 | zotero_get_annotations | Get annotations for item `<ITEM_KEY>`. | Requires annotations or attachments. |
 | zotero_get_notes | List 5 notes from my Zotero library. |  |
 | zotero_search_notes | Search notes for the string "token" and return up to 5 results. |  |
-| zotero_create_note | Create a note on item `<ITEM_KEY>` with text "# Test Note\n\nThis is a test note." and tag `mcp-note-test`. | Replace `<ITEM_KEY>`. |
+| zotero_create_note | Create a note on item `<ITEM_KEY>` with text "# Test Note\n\nThis is a test note." and tags `["mcp-note-test"]`. | Replace `<ITEM_KEY>`. |
 | zotero_create_items | Create two items: a book titled "LLM Test Book" and a journal article titled "LLM Test Article", each with tag `mcp-write-test`. | Creates new items. |
 | zotero_update_item | Update item `<ITEM_KEY>` to add tag `mcp-updated`. | Replace `<ITEM_KEY>`. |
 | zotero_update_items | Batch update items `<ITEM_KEY_1>` and `<ITEM_KEY_2>` to set tag `mcp-batch-updated`. | Replace keys. |

@@ -226,17 +226,27 @@ Then click "Save".
 
 Cherry Studio also provides a visual configuration method for general settings and tools selection.
 
-## 🔧 Advanced Configuration
+## Advanced Configuration
 
-### Using Web API Instead of Local API
+### Using Web API and Hybrid Routing
 
-For accessing your Zotero library via the web API (useful for remote setups):
+For web-only access to your Zotero library:
 
 ```bash
 zotero-mcp setup --no-local --api-key YOUR_API_KEY --library-id YOUR_LIBRARY_ID
 ```
 
-When to choose Web API: If you plan to use write tools (create/update/delete items, collections, tags, notes), you must use the Web API and an API key with write permissions. Local API access is best for read-only workflows.
+For hybrid mode (local reads/fulltext + web writes):
+
+```bash
+zotero-mcp setup --api-key YOUR_API_KEY --library-id YOUR_LIBRARY_ID
+```
+
+When to choose Web API: If you plan to use write tools (create/update/delete items, collections, tags, notes), you need Web API credentials with write permissions.
+
+Hybrid mode is also supported and recommended for large local libraries:
+- read/fulltext via local API
+- write operations via Web API
 
 ### Environment Variables
 
@@ -245,6 +255,10 @@ When to choose Web API: If you plan to use write tools (create/update/delete ite
 - `ZOTERO_API_KEY`: Your Zotero API key (for web API)
 - `ZOTERO_LIBRARY_ID`: Your Zotero library ID (for web API)
 - `ZOTERO_LIBRARY_TYPE`: The type of library (user or group, default: user)
+- `ZOTERO_READ_MODE`: `local|web|auto` (default `auto`; prefers local when available)
+- `ZOTERO_WRITE_MODE`: `web|local|auto` (default `auto`; prefers web when credentials exist)
+- `ZOTERO_LOCAL_LIBRARY_ID`: Optional override for local API library id (default `0`)
+- `ZOTERO_ENABLE_SEMANTIC_TOOLS`: `true|false` (default `true`; set to `false` to hide semantic/db MCP tools)
 
 **Semantic Search:**
 - `ZOTERO_EMBEDDING_MODEL`: Embedding model to use (default, openai, gemini)
@@ -267,6 +281,9 @@ zotero-mcp serve --transport stdio|streamable-http|sse
 
 # Setup and configuration
 zotero-mcp setup --help                    # Get help on setup options
+zotero-mcp setup --api-key ... --library-id ... # Hybrid mode (local reads + web writes)
+zotero-mcp setup --no-local --api-key ... --library-id ... # Web-only mode
+zotero-mcp setup --disable-semantic-tools  # Hide semantic/db MCP tools for this client config
 zotero-mcp setup --semantic-config-only    # Configure only semantic search
 zotero-mcp setup-info                      # Show installation path and config info for MCP clients
 
@@ -304,6 +321,7 @@ The first time you use PDF annotation features, the necessary tools will be auto
 ## Available Tools
 
 ### Semantic Search Tools
+- Optional: set `ZOTERO_ENABLE_SEMANTIC_TOOLS=false` (or run setup with `--disable-semantic-tools`) to hide these tools.
 - `zotero_semantic_search`: AI-powered similarity search with embedding models
 - `zotero_update_search_database`: Manually update the semantic search database
 - `zotero_get_search_database_status`: Check database status and configuration
@@ -329,7 +347,7 @@ The first time you use PDF annotation features, the necessary tools will be auto
 - `zotero_create_note`: Create a new note for an item (beta feature)
 
 ### Write & Library Management Tools
-- Requires Web API: set `ZOTERO_LOCAL=false` and provide `ZOTERO_API_KEY` / `ZOTERO_LIBRARY_ID` (with write permissions).
+- Requires Web API credentials for reliable operation. In hybrid mode (`ZOTERO_LOCAL=true` + web credentials), write tools route to Web API automatically.
 - `zotero_create_items`: Create one or more items from editable JSON
 - `zotero_update_item`: Update a single item (PATCH semantics)
 - `zotero_update_items`: Batch update items (PATCH semantics)
@@ -366,7 +384,7 @@ Tool prompt checklist: `docs/tool-prompts.md`
 - **No results found**: Ensure Zotero is running and the local API is enabled. You need to toggle on `Allow other applications on this computer to communicate with Zotero` in Zotero preferences.
 - **Can't connect to library**: Check your API key and library ID if using web API
 - **Full text not available**: Make sure you're using Zotero 7+ for local full-text access
-- **Local library limitations**: Some functionality (tagging, library modifications) may not work with local JS API. Consider using web library setup for full functionality. (See the [docs](docs/getting-started.md#local-library-limitations) for more info.)
+- **Local library limitations**: The local JS API is read-focused. For writes, configure Web API credentials and use hybrid routing (`ZOTERO_READ_MODE=local`, `ZOTERO_WRITE_MODE=web`). (See the [docs](docs/getting-started.md#local-library-limitations) for more info.)
 - **Installation/search option switching issues**: Database problems from changing install methods or search options can often be resolved with `zotero-mcp update-db --force-rebuild`
 
 ### Semantic Search Issues
