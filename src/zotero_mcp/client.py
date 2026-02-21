@@ -48,12 +48,19 @@ class AttachmentDetails:
     content_type: str
 
 
-def get_zotero_client() -> zotero.Zotero:
+def get_zotero_client(operation: str = "read") -> zotero.Zotero:
     """
     Get authenticated Zotero client using environment variables.
 
     If a runtime library override is active (via set_active_library()),
     those values take precedence over environment variables.
+
+    Args:
+        operation: "read" (default) or "write". Write operations always use the
+                   web API — the local Zotero API does not support writes. In
+                   hybrid setups (ZOTERO_LOCAL=true with web credentials also
+                   present), reads go to the local instance while writes are
+                   routed to the web API.
 
     Returns:
         A configured Zotero client instance.
@@ -68,11 +75,25 @@ def get_zotero_client() -> zotero.Zotero:
     api_key = os.getenv("ZOTERO_API_KEY")
     local = os.getenv("ZOTERO_LOCAL", "").lower() in ["true", "yes", "1"]
 
-    # For local API, default to user ID 0 if not specified
+    if operation == "write":
+        # Write operations always require the web API
+        if not library_id or not api_key:
+            raise ValueError(
+                "Write operations require the Zotero web API. "
+                "Please set ZOTERO_LIBRARY_ID and ZOTERO_API_KEY environment variables. "
+                "The local Zotero API (ZOTERO_LOCAL=true) does not support write operations."
+            )
+        return zotero.Zotero(
+            library_id=library_id,
+            library_type=library_type,
+            api_key=api_key,
+            local=False,
+        )
+
+    # Read operation: use local if configured, fall back to web
     if local and not library_id:
         library_id = "0"
 
-    # For remote API, we need both library_id and api_key
     if not local and not (library_id and api_key):
         raise ValueError(
             "Missing required environment variables. Please set ZOTERO_LIBRARY_ID and ZOTERO_API_KEY, "

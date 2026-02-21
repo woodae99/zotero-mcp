@@ -1181,7 +1181,7 @@ def batch_update_tags(
             return "Error: After parsing, no valid tags were provided to add or remove"
 
         ctx.info(f"Batch updating tags for items matching '{query}'")
-        zot = get_zotero_client()
+        zot = get_zotero_client(operation="write")
 
         if isinstance(limit, str):
             limit = int(limit)
@@ -2522,6 +2522,726 @@ def create_annotation(
     except Exception as e:
         ctx.error(f"Error creating annotation: {str(e)}")
         return f"Error creating annotation: {str(e)}"
+
+
+# ---------------------------------------------------------------------------
+# Write & Management Tools
+# All write operations require the Zotero web API (ZOTERO_API_KEY +
+# ZOTERO_LIBRARY_ID).  In hybrid setups (local reads + web writes) the
+# get_zotero_client(operation="write") call in each tool handles routing.
+# ---------------------------------------------------------------------------
+
+def _apply_tag_rules(
+    tags: list[dict],
+    tag_mapping: dict[str, str] | None,
+    case_mode: str,
+    trim_whitespace: bool,
+) -> tuple[list[dict], bool]:
+    """Apply case/whitespace/mapping rules to a list of Zotero tag dicts.
+
+    Returns the transformed list and a boolean indicating whether any value
+    actually changed (used to decide whether an API call is necessary).
+    """
+    normalized: list[dict] = []
+    seen: set[str] = set()
+    changed = False
+
+    for tag_obj in tags:
+        value = tag_obj.get("tag", "")
+        new_value = value
+
+        if trim_whitespace:
+            new_value = new_value.strip()
+
+        if tag_mapping and new_value in tag_mapping:
+            new_value = tag_mapping[new_value]
+
+        if case_mode == "lower":
+            new_value = new_value.lower()
+        elif case_mode == "upper":
+            new_value = new_value.upper()
+        elif case_mode == "title":
+            new_value = new_value.title()
+
+        if new_value != value:
+            changed = True
+
+        if new_value and new_value not in seen:
+            normalized.append({"tag": new_value})
+            seen.add(new_value)
+
+    return normalized, changed
+
+
+@mcp.tool(
+    name="zotero_create_items",
+    description=(
+        "Create one or more Zotero items. Use this to add new literature or any "
+        "other item type to the library. Requires the Zotero web API."
+    ),
+)
+def create_items(
+    items: list[dict] | dict | str,
+    parent_item_key: str | None = None,
+    *,
+    ctx: Context,
+) -> str:
+    """
+    Create one or more Zotero items.
+
+    Args:
+        items: A single item dict, a list of item dicts, or a JSON string.
+               Each item must include an "itemType" field.
+        parent_item_key: Optional parent item key to attach all created items to.
+        ctx: MCP context
+
+    Returns:
+        Summary with created item keys.
+    """
+    try:
+        if isinstance(items, str):
+            try:
+                items = json.loads(items)
+            except json.JSONDecodeError as e:
+                return f"Error: items must be a list/dict or JSON string. JSON error: {e}"
+
+        if isinstance(items, dict):
+            items_list = [items]
+        elif isinstance(items, list):
+            items_list = items
+        else:
+            return "Error: items must be a dict, list of dicts, or JSON string."
+
+        if not items_list:
+            return "Error: items list is empty."
+
+        missing_types = [i for i, item in enumerate(items_list, 1) if "itemType" not in item]
+        if missing_types:
+            return f"Error: itemType missing for item(s): {', '.join(map(str, missing_types))}"
+
+        ctx.info(f"Creating {len(items_list)} item(s)")
+        zot = get_zotero_client(operation="write")
+        result = zot.create_items(items_list, parentid=parent_item_key)
+
+        success = result.get("success") or result.get("successful") or {}
+        failed = result.get("failed") or {}
+        unchanged = result.get("unchanged") or {}
+
+        created_keys = list(success.values())
+        output = ["# Create Items Result", ""]
+        output.append(f"Requested: {len(items_list)}")
+        output.append(f"Created: {len(created_keys)}")
+        output.append(f"Unchanged: {len(unchanged)}")
+        output.append(f"Failed: {len(failed)}")
+
+        if created_keys:
+            output.append("")
+            output.append("## Created Keys")
+            output.extend([f"- {key}" for key in created_keys])
+
+        if failed:
+            output.append("")
+            output.append("## Failed")
+            for idx, info in failed.items():
+                output.append(f"- {idx}: {info}")
+
+        return "\n".join(output)
+    except Exception as e:
+        ctx.error(f"Error creating items: {e}")
+        return f"Error creating items: {e}"
+
+
+@mcp.tool(
+    name="zotero_update_item",
+    description=(
+        "Update a Zotero item by key. Fetches the current data and merges the "
+        "provided fields (PATCH semantics), so only the fields you supply are changed. "
+        "Requires the Zotero web API."
+    ),
+)
+def update_item(
+    item_key: str,
+    updates: dict | str,
+    *,
+    ctx: Context,
+) -> str:
+    """
+    Update a Zotero item.
+
+    Args:
+        item_key: Zotero item key to update (e.g. "ABCD1234").
+        updates: Dict of fields to update, or a JSON string of that dict.
+                 Common fields: title, date, abstractNote, tags, collections,
+                 publicationTitle, volume, issue, pages, DOI, url, extra.
+        ctx: MCP context
+
+    Returns:
+        Update status message.
+    """
+    try:
+        if isinstance(updates, str):
+            try:
+                updates = json.loads(updates)
+            except json.JSONDecodeError as e:
+                return f"Error: updates must be a dict or JSON string. JSON error: {e}"
+
+        if not isinstance(updates, dict):
+            return "Error: updates must be a dict or JSON string."
+
+        ctx.info(f"Updating item {item_key}")
+        zot = get_zotero_client(operation="write")
+
+        item = zot.item(item_key)
+        if not item:
+            return f"Error: No item found with key: {item_key}"
+
+        payload = item.get("data", {}).copy()
+        payload.update(updates)
+        payload["key"] = item_key
+        if "version" not in payload:
+            payload["version"] = item.get("data", {}).get("version") or item.get("version")
+
+        result = zot.update_item(payload)
+        return f"Updated item {item_key}: {result}"
+    except Exception as e:
+        ctx.error(f"Error updating item: {e}")
+        return f"Error updating item: {e}"
+
+
+@mcp.tool(
+    name="zotero_delete_item",
+    description=(
+        "Delete one or more Zotero items by key. Accepts a single key string or a "
+        "list of keys (max 50 per call). Requires the Zotero web API."
+    ),
+)
+def delete_item(
+    item_keys: str | list[str],
+    *,
+    ctx: Context,
+) -> str:
+    """
+    Delete one or more Zotero items.
+
+    Args:
+        item_keys: A single item key string, or a list of item key strings.
+        ctx: MCP context
+
+    Returns:
+        Delete status message.
+    """
+    try:
+        if isinstance(item_keys, str):
+            item_keys = [item_keys]
+
+        if not isinstance(item_keys, list) or not item_keys:
+            return "Error: item_keys must be a non-empty string or list of strings."
+
+        ctx.info(f"Deleting {len(item_keys)} item(s)")
+        zot = get_zotero_client(operation="write")
+
+        if len(item_keys) == 1:
+            item = zot.item(item_keys[0])
+            if not item:
+                return f"Error: No item found with key: {item_keys[0]}"
+            data = item.get("data", {})
+            if not data.get("key") or data.get("version") is None:
+                return f"Error: Missing key/version for item: {item_keys[0]}"
+            result = zot.delete_item(data)
+        else:
+            # Batch delete: fetch library version header
+            zot.items(limit=1)
+            library_version = zot.request.headers.get("last-modified-version")
+            payload = [{"key": k} for k in item_keys]
+            result = zot.delete_item(payload, last_modified=library_version)
+
+        return f"Deleted {len(item_keys)} item(s): {result}"
+    except Exception as e:
+        ctx.error(f"Error deleting item(s): {e}")
+        return f"Error deleting item(s): {e}"
+
+
+@mcp.tool(
+    name="zotero_create_collection",
+    description=(
+        "Create a new Zotero collection (folder). Optionally nest it under an "
+        "existing collection. Requires the Zotero web API."
+    ),
+)
+def create_collection(
+    name: str,
+    parent_collection_key: str | None = None,
+    *,
+    ctx: Context,
+) -> str:
+    """
+    Create a Zotero collection.
+
+    Args:
+        name: Collection name.
+        parent_collection_key: Optional parent collection key for nesting.
+        ctx: MCP context
+
+    Returns:
+        Created collection key.
+    """
+    try:
+        ctx.info(f"Creating collection '{name}'")
+        zot = get_zotero_client(operation="write")
+        payload: dict = {"name": name}
+        if parent_collection_key:
+            payload["parentCollection"] = parent_collection_key
+        result = zot.create_collections([payload])
+        success = result.get("success") or result.get("successful") or {}
+        if success:
+            key = next(iter(success.values()))
+            return f"Collection created with key: {key}"
+        return f"Collection creation result: {result}"
+    except Exception as e:
+        ctx.error(f"Error creating collection: {e}")
+        return f"Error creating collection: {e}"
+
+
+@mcp.tool(
+    name="zotero_update_collection",
+    description=(
+        "Rename a Zotero collection or change its parent. "
+        "Requires the Zotero web API."
+    ),
+)
+def update_collection(
+    collection_key: str,
+    name: str | None = None,
+    parent_collection_key: str | None = None,
+    *,
+    ctx: Context,
+) -> str:
+    """
+    Update a Zotero collection.
+
+    Args:
+        collection_key: Collection key to update.
+        name: New name (leave None to keep existing name).
+        parent_collection_key: New parent key, or empty string "" to move to
+                               the top level (remove parent).
+        ctx: MCP context
+
+    Returns:
+        Update status message.
+    """
+    try:
+        ctx.info(f"Updating collection {collection_key}")
+        zot = get_zotero_client(operation="write")
+        coll = zot.collection(collection_key)
+        if not coll:
+            return f"Error: No collection found with key: {collection_key}"
+        data = coll.get("data", {}).copy()
+        if name is not None:
+            data["name"] = name
+        if parent_collection_key is not None:
+            data["parentCollection"] = False if parent_collection_key == "" else parent_collection_key
+        data["key"] = collection_key
+        if "version" not in data:
+            data["version"] = coll.get("data", {}).get("version") or coll.get("version")
+        result = zot.update_collection(data)
+        return f"Updated collection {collection_key}: {result}"
+    except Exception as e:
+        ctx.error(f"Error updating collection: {e}")
+        return f"Error updating collection: {e}"
+
+
+@mcp.tool(
+    name="zotero_delete_collection",
+    description=(
+        "Delete one or more Zotero collections by key. Accepts a single key string "
+        "or a list of keys (max 50 per call). Items inside are not deleted. "
+        "Requires the Zotero web API."
+    ),
+)
+def delete_collection(
+    collection_keys: str | list[str],
+    *,
+    ctx: Context,
+) -> str:
+    """
+    Delete one or more Zotero collections.
+
+    Args:
+        collection_keys: A single collection key string, or a list of keys.
+        ctx: MCP context
+
+    Returns:
+        Delete status message.
+    """
+    try:
+        if isinstance(collection_keys, str):
+            collection_keys = [collection_keys]
+
+        if not isinstance(collection_keys, list) or not collection_keys:
+            return "Error: collection_keys must be a non-empty string or list of strings."
+
+        ctx.info(f"Deleting {len(collection_keys)} collection(s)")
+        zot = get_zotero_client(operation="write")
+
+        if len(collection_keys) == 1:
+            coll = zot.collection(collection_keys[0])
+            if not coll:
+                return f"Error: No collection found with key: {collection_keys[0]}"
+            data = coll.get("data", {})
+            if not data.get("key") or data.get("version") is None:
+                return f"Error: Missing key/version for collection: {collection_keys[0]}"
+            result = zot.delete_collection(data)
+        else:
+            zot.collections(limit=1)
+            library_version = zot.request.headers.get("last-modified-version")
+            payload = [{"key": k} for k in collection_keys]
+            result = zot.delete_collection(payload, last_modified=library_version)
+
+        return f"Deleted {len(collection_keys)} collection(s): {result}"
+    except Exception as e:
+        ctx.error(f"Error deleting collection(s): {e}")
+        return f"Error deleting collection(s): {e}"
+
+
+@mcp.tool(
+    name="zotero_delete_tags",
+    description=(
+        "Delete one or more tags from the entire Zotero library (removes the tag "
+        "from all items that carry it). Requires the Zotero web API."
+    ),
+)
+def delete_tags(
+    tags: list[str] | str,
+    *,
+    ctx: Context,
+) -> str:
+    """
+    Delete tags library-wide by name (max 50 per call).
+
+    Args:
+        tags: A single tag string, a list of tag strings, or a JSON array string.
+        ctx: MCP context
+
+    Returns:
+        Delete status message.
+    """
+    try:
+        if isinstance(tags, str):
+            try:
+                tags = json.loads(tags)
+            except json.JSONDecodeError:
+                tags = [tags]
+
+        if not isinstance(tags, list) or not tags:
+            return "Error: tags must be a non-empty string or list of strings."
+
+        ctx.info(f"Deleting {len(tags)} tag(s)")
+        zot = get_zotero_client(operation="write")
+        result = zot.delete_tags(*tags)
+        return f"Deleted tags {tags}: {result}"
+    except Exception as e:
+        ctx.error(f"Error deleting tags: {e}")
+        return f"Error deleting tags: {e}"
+
+
+@mcp.tool(
+    name="zotero_normalize_tags",
+    description=(
+        "Normalize tags on items matching a search query: apply case conversion, "
+        "strip whitespace, and/or remap tag names. Run with dry_run=true first to "
+        "preview changes. Requires the Zotero web API."
+    ),
+)
+def normalize_tags(
+    query: str,
+    tag_mapping: dict[str, str] | str | None = None,
+    case_mode: Literal["lower", "upper", "title", "none"] = "none",
+    trim_whitespace: bool = True,
+    limit: int | str = 100,
+    dry_run: bool = True,
+    *,
+    ctx: Context,
+) -> str:
+    """
+    Normalize tags for items matching a query.
+
+    Args:
+        query: Search query to select items (use "*" or a broad term for a wide sweep).
+        tag_mapping: Optional dict (or JSON object string) mapping old tag values to
+                     new ones. E.g. {"machine learning": "Machine Learning"}.
+        case_mode: Apply case conversion: "lower", "upper", "title", or "none".
+        trim_whitespace: Strip leading/trailing whitespace from tag values.
+        limit: Maximum number of items to process per call (repeat calls to handle
+               large libraries in batches).
+        dry_run: If true (default), report planned changes without writing them.
+        ctx: MCP context
+
+    Returns:
+        Summary of normalization changes.
+    """
+    try:
+        if not query.strip():
+            return "Error: Search query cannot be empty"
+
+        if tag_mapping and isinstance(tag_mapping, str):
+            try:
+                tag_mapping = json.loads(tag_mapping)
+            except json.JSONDecodeError as e:
+                return f"Error: tag_mapping must be a dict or JSON string. JSON error: {e}"
+
+        if tag_mapping and not isinstance(tag_mapping, dict):
+            return "Error: tag_mapping must be a dict or JSON string."
+
+        if isinstance(limit, str):
+            limit = int(limit)
+
+        ctx.info(f"Normalizing tags for '{query}' (dry_run={dry_run})")
+        zot = get_zotero_client(operation="write")
+        zot.add_parameters(q=query, itemType="-attachment", limit=limit)
+        items = zot.items()
+
+        if not items:
+            return f"No items found matching query: '{query}'"
+
+        updated_count = 0
+        skipped_count = 0
+        items_changed = 0
+
+        for item in items:
+            if item["data"].get("itemType") == "attachment":
+                skipped_count += 1
+                continue
+
+            tags = item["data"].get("tags", [])
+            if not tags:
+                skipped_count += 1
+                continue
+
+            normalized, changed = _apply_tag_rules(
+                tags=tags,
+                tag_mapping=tag_mapping,
+                case_mode=case_mode,
+                trim_whitespace=trim_whitespace,
+            )
+
+            if not changed and len(normalized) == len(tags):
+                skipped_count += 1
+                continue
+
+            items_changed += 1
+
+            if dry_run:
+                updated_count += 1
+                continue
+
+            try:
+                item["data"]["tags"] = normalized
+                zot.update_item(item)
+                updated_count += 1
+            except Exception as e:
+                ctx.error(f"Failed to update tags for {item.get('key', '?')}: {e}")
+                skipped_count += 1
+
+        output = ["# Tag Normalization Results", ""]
+        output.append(f"Query: '{query}'")
+        output.append(f"Items processed: {len(items)}")
+        output.append(f"Items with changes: {items_changed}")
+        output.append(f"Items updated: {updated_count}")
+        output.append(f"Items skipped: {skipped_count}")
+        output.append(f"Dry run: {dry_run}")
+        if dry_run and items_changed:
+            output.append("")
+            output.append("Run again with dry_run=false to apply these changes.")
+        return "\n".join(output)
+    except Exception as e:
+        ctx.error(f"Error normalizing tags: {e}")
+        return f"Error normalizing tags: {e}"
+
+
+@mcp.tool(
+    name="zotero_batch_update_items",
+    description=(
+        "Apply a field update to all items matching a search query. Use dry_run=true "
+        "first to preview which items will be affected. Common uses: bulk-set a field "
+        "value, add/remove items from a collection, correct a systematic metadata "
+        "error. Requires the Zotero web API."
+    ),
+)
+def batch_update_items(
+    query: str,
+    updates: dict | str,
+    item_type: str = "-attachment",
+    limit: int | str = 50,
+    dry_run: bool = True,
+    *,
+    ctx: Context,
+) -> str:
+    """
+    Apply a field update to items matching a text query.
+
+    Args:
+        query: Search query string to select items.
+        updates: Dict of field updates to apply to each matched item, or a JSON
+                 string. E.g. {"extra": "reviewed"} or {"collections": ["KEY1"]}.
+        item_type: Zotero item type filter (default "-attachment" excludes
+                   attachments). Use e.g. "journalArticle" to restrict further.
+        limit: Maximum number of items to update per call.
+        dry_run: If true (default), list matched items without writing changes.
+        ctx: MCP context
+
+    Returns:
+        Summary of the batch update.
+    """
+    try:
+        if not query.strip():
+            return "Error: Search query cannot be empty"
+
+        if isinstance(updates, str):
+            try:
+                updates = json.loads(updates)
+            except json.JSONDecodeError as e:
+                return f"Error: updates must be a dict or JSON string. JSON error: {e}"
+
+        if not isinstance(updates, dict) or not updates:
+            return "Error: updates must be a non-empty dict or JSON string."
+
+        if isinstance(limit, str):
+            limit = int(limit)
+
+        ctx.info(f"Batch updating items matching '{query}' (dry_run={dry_run})")
+        zot = get_zotero_client(operation="write")
+        zot.add_parameters(q=query, itemType=item_type, limit=limit)
+        items = zot.items()
+
+        if not items:
+            return f"No items found matching query: '{query}'"
+
+        updated_count = 0
+        skipped_count = 0
+
+        for item in items:
+            if dry_run:
+                updated_count += 1
+                continue
+
+            try:
+                item["data"].update(updates)
+                zot.update_item(item)
+                updated_count += 1
+            except Exception as e:
+                err = str(e)
+                item_key = item.get("key") or item["data"].get("key")
+                # Retry once on version conflict
+                if item_key and ("412" in err or "Precondition Failed" in err):
+                    try:
+                        fresh = zot.item(item_key)
+                        fresh["data"].update(updates)
+                        zot.update_item(fresh)
+                        updated_count += 1
+                        continue
+                    except Exception as retry_err:
+                        ctx.error(f"Retry failed for {item_key}: {retry_err}")
+                ctx.error(f"Failed to update {item_key or '?'}: {err}")
+                skipped_count += 1
+
+        output = ["# Batch Item Update Results", ""]
+        output.append(f"Query: '{query}'")
+        output.append(f"Matched items: {len(items)}")
+        output.append(f"Items {'would be ' if dry_run else ''}updated: {updated_count}")
+        output.append(f"Items skipped: {skipped_count}")
+        output.append(f"Dry run: {dry_run}")
+        if dry_run and updated_count:
+            output.append("")
+            output.append("Run again with dry_run=false to apply these changes.")
+        return "\n".join(output)
+    except Exception as e:
+        ctx.error(f"Error in batch item update: {e}")
+        return f"Error in batch item update: {e}"
+
+
+@mcp.tool(
+    name="zotero_collect_items",
+    description=(
+        "Add items matching a search query to a Zotero collection. Use dry_run=true "
+        "first to preview which items will be moved. Requires the Zotero web API."
+    ),
+)
+def collect_items(
+    query: str,
+    collection_key: str,
+    limit: int | str = 50,
+    dry_run: bool = True,
+    *,
+    ctx: Context,
+) -> str:
+    """
+    Add items matching a query to a collection.
+
+    Args:
+        query: Search query string to select items.
+        collection_key: Target collection key to add the items to.
+        limit: Maximum number of items to process per call.
+        dry_run: If true (default), report which items would be added without
+                 making any changes.
+        ctx: MCP context
+
+    Returns:
+        Summary of collection updates.
+    """
+    try:
+        if not query.strip():
+            return "Error: Search query cannot be empty"
+
+        if isinstance(limit, str):
+            limit = int(limit)
+
+        ctx.info(f"Collecting items matching '{query}' into {collection_key} (dry_run={dry_run})")
+        zot = get_zotero_client(operation="write")
+        zot.add_parameters(q=query, itemType="-attachment", limit=limit)
+        items = zot.items()
+
+        if not items:
+            return f"No items found matching query: '{query}'"
+
+        updated_count = 0
+        skipped_count = 0
+
+        for item in items:
+            if item["data"].get("itemType") == "attachment":
+                skipped_count += 1
+                continue
+
+            collections = item["data"].get("collections", [])
+            if collection_key in collections:
+                skipped_count += 1
+                continue
+
+            if dry_run:
+                updated_count += 1
+                continue
+
+            try:
+                collections.append(collection_key)
+                item["data"]["collections"] = collections
+                zot.update_item(item)
+                updated_count += 1
+            except Exception as e:
+                ctx.error(f"Failed to update collections for {item.get('key', '?')}: {e}")
+                skipped_count += 1
+
+        output = ["# Collect Items Results", ""]
+        output.append(f"Query: '{query}'")
+        output.append(f"Items processed: {len(items)}")
+        output.append(f"Items {'would be ' if dry_run else ''}added to collection: {updated_count}")
+        output.append(f"Items already in collection / skipped: {skipped_count}")
+        output.append(f"Dry run: {dry_run}")
+        if dry_run and updated_count:
+            output.append("")
+            output.append("Run again with dry_run=false to apply these changes.")
+        return "\n".join(output)
+    except Exception as e:
+        ctx.error(f"Error collecting items: {e}")
+        return f"Error collecting items: {e}"
 
 
 @mcp.tool(

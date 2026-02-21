@@ -100,7 +100,7 @@ def test_batch_update_tags_validates_json_array(monkeypatch):
             },
         }
     ]
-    monkeypatch.setattr(server, "get_zotero_client", lambda: FakeZoteroForTags(items))
+    monkeypatch.setattr(server, "get_zotero_client", lambda **_kw: FakeZoteroForTags(items))
 
     result = server.batch_update_tags(
         query="anything",

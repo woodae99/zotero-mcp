@@ -182,9 +182,14 @@ zotero-mcp serve --transport sse --host localhost --port 8000
 
 ## Available Tools
 
+### Read & Search Tools
+
 When connected to Claude Desktop or another MCP client, you'll have access to these tools:
 
 - **zotero_search_items**: Search your library by title, creator, or content
+- **zotero_search_by_tag**: Find items by tag with AND/OR/NOT logic
+- **zotero_advanced_search**: Multi-field search with conditions
+- **zotero_search_notes**: Search note content and PDF annotations
 - **zotero_get_item_metadata**: Get detailed information about a specific item
 - **zotero_get_item_fulltext**: Get the full text content of an item
 - **zotero_get_collections**: List all collections in your library
@@ -192,16 +197,63 @@ When connected to Claude Desktop or another MCP client, you'll have access to th
 - **zotero_get_item_children**: Get child items (attachments, notes) for a specific item
 - **zotero_get_tags**: Get all tags used in your library
 - **zotero_get_recent**: Get recently added items to your library
+- **zotero_get_annotations**: Get PDF/EPUB annotations for an item
+- **zotero_get_notes**: Get notes attached to an item
+- **zotero_list_libraries**: List accessible Zotero libraries
+- **zotero_list_feeds**: List RSS/Atom feeds in your library
+- **zotero_get_feed_items**: Get items from a feed
+
+### Write & Management Tools
+
+These tools require the Zotero **web API** (`ZOTERO_API_KEY` + `ZOTERO_LIBRARY_ID`). The local
+API (Zotero 7 running on your machine) supports reads only. In a **hybrid setup** — where you
+set `ZOTERO_LOCAL=true` for fast local reads but also supply web credentials — these tools
+automatically route writes through the web API.
+
+> **Hybrid mode** (recommended for large libraries): set `ZOTERO_LOCAL=true` AND provide
+> `ZOTERO_API_KEY` / `ZOTERO_LIBRARY_ID`. Reads use the local instance; writes use the web API.
+
+#### Item management
+- **zotero_create_items**: Add new items to the library (books, articles, web pages, etc.)
+- **zotero_update_item**: Update a single item's metadata (PATCH semantics — only supplied fields change)
+- **zotero_delete_item**: Delete one or more items (accepts a single key or a list)
+
+#### Notes
+- **zotero_create_note**: Create a note attached to an item — ideal for summaries, reviews, or extracted insights
+- **zotero_create_annotation**: Create a highlight annotation on a PDF or EPUB
+
+#### Collection management
+- **zotero_create_collection**: Create a new collection (folder)
+- **zotero_update_collection**: Rename a collection or change its parent
+- **zotero_delete_collection**: Delete one or more collections (items inside are not deleted)
+
+#### Tag management
+- **zotero_batch_update_tags**: Add or remove tags across all items matching a search query
+- **zotero_normalize_tags**: Standardise tag casing, whitespace, or rename tags via a mapping. Run with `dry_run=true` first to preview.
+- **zotero_delete_tags**: Remove a tag from the entire library
+
+#### Batch operations
+- **zotero_batch_update_items**: Apply a field update to all items matching a search query. Always preview with `dry_run=true` first.
+- **zotero_collect_items**: Add all items matching a search query to a collection
 
 ## Example Queries
 
 Once connected, you can ask Claude questions like:
 
+**Reading & searching**
 - "Search my Zotero library for papers about machine learning"
 - "Find articles by Smith in my Zotero library"
 - "Show me my most recent additions to Zotero"
 - "What collections do I have in my Zotero library?"
 - "Get the full text of paper XYZ from my Zotero library"
+
+**Librarian tasks** *(require web API)*
+- "Add this paper to my Zotero library: [title, authors, DOI]"
+- "Summarise the full text of paper XYZ and save the summary as a note"
+- "Find all items tagged 'to-read' and add the tag 'reviewed'"
+- "Show me all tags that are variations of 'machine learning' and normalise them"
+- "Create a collection called 'Deep Learning 2024' and add all papers from 2024 about deep learning to it"
+- "Delete the tags 'temp' and 'draft' from my library"
 
 ## Troubleshooting
 
@@ -214,9 +266,20 @@ If you encounter issues:
 
 ### Local Library Limitations
 
-Some functionality will not work for local libraries due to the distinct differences with [Zotero's local JS API](https://www.zotero.org/support/dev/client_coding/javascript_api). For instance, tagging and other library modifications might not work as expected with the local API connection.
+The local Zotero API (port 23119) is read-only — it does not support creating or modifying items,
+collections, or tags. Write and management tools require the Zotero web API.
 
-**Workaround**: Even without web storage, a workaround for some of these functionalities might be to set up a web library, point the MCP at that, and then things like setting tags should work properly. We're thinking about better ways to work with local instances in future updates.
+**Recommended hybrid setup**: supply both local and web credentials. Reads are fast (local), and
+writes are routed automatically to the web API:
+
+```bash
+export ZOTERO_LOCAL=true          # fast local reads
+export ZOTERO_API_KEY=your_key    # enables write tools via web API
+export ZOTERO_LIBRARY_ID=your_id
+```
+
+This gives you the best of both: low-latency reads for large libraries and full write access for
+librarian and research-assistant tasks.
 
 ### Database Issues
 
