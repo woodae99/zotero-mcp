@@ -283,13 +283,18 @@ def _normalize_advanced_conditions(
 
     normalized = []
     for i, condition in enumerate(conditions, 1):
-        if "field" not in condition or "operation" not in condition or "value" not in condition:
+        operation_key = "operation" if "operation" in condition else "operator"
+        if (
+            "field" not in condition
+            or operation_key not in condition
+            or "value" not in condition
+        ):
             raise ValueError(
-                f"Condition {i} is missing required fields (field, operation, value)"
+                f"Condition {i} is missing required fields (field, operation/operator, value)"
             )
 
         field = _normalize_field(str(condition["field"]))
-        op = _normalize_operator(str(condition["operation"]))
+        op = _normalize_operator(str(condition[operation_key]))
         value = "" if condition["value"] is None else str(condition["value"])
 
         if not field:
@@ -297,7 +302,7 @@ def _normalize_advanced_conditions(
 
         if op not in _ADVANCED_ALLOWED_OPERATORS:
             raise ValueError(
-                f"Condition {i} has unsupported operator '{condition['operation']}'. "
+                f"Condition {i} has unsupported operator '{condition[operation_key]}'. "
                 f"Supported: {sorted(_ADVANCED_ALLOWED_OPERATORS)}"
             )
 
@@ -849,12 +854,14 @@ def get_collection_items(
         ctx.info(f"Fetching items for collection {collection_key}")
         zot = get_zotero_client(operation="read")
 
-        # First get the collection details
+        # First get the collection details and fail fast if it doesn't exist.
         try:
             collection = zot.collection(collection_key)
-            collection_name = collection["data"].get("name", "Unnamed Collection")
         except Exception:
-            collection_name = f"Collection {collection_key}"
+            collection = None
+        if not collection:
+            return f"Error: No collection found with key: {collection_key}"
+        collection_name = collection.get("data", {}).get("name", "Unnamed Collection")
 
         if isinstance(limit, str):
             limit = int(limit)
