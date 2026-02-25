@@ -13,6 +13,9 @@
   <a href="https://modelcontextprotocol.io/introduction">
     <img src="https://img.shields.io/badge/MCP-0175C2?style=for-the-badge&logoColor=white" alt="MCP">
   </a>
+  <a href="https://pypi.org/project/zotero-mcp-server/">
+    <img src="https://img.shields.io/pypi/v/zotero-mcp-server?style=for-the-badge&logo=pypi&logoColor=white" alt="PyPI">
+  </a>
 </p>
 
 **Zotero MCP** seamlessly connects your [Zotero](https://www.zotero.org/) research library with [ChatGPT](https://openai.com), [Claude](https://www.anthropic.com/claude), and other AI assistants (e.g., [Cherry Studio](https://cherry-ai.com/), [Chorus](https://chorus.sh), [Cursor](https://www.cursor.com/)) via the [Model Context Protocol](https://modelcontextprotocol.io/introduction). Review papers, get summaries, analyze citations, extract PDF annotations, and more!
@@ -50,32 +53,30 @@
 - Local method for offline access (no API key needed)
 - Web API for cloud library access
 - Perfect for both local research and remote collaboration
-- Note: Write operations (create/update/delete) require the Web API; local API access is read-focused.
 
 ## 🚀 Quick Install
 
 ### Default Installation
 
-#### Installing via uv
+#### Installing via uv (recommended)
 
 ```bash
-uv tool install "git+https://github.com/54yyyu/zotero-mcp.git"
+uv tool install zotero-mcp-server
 zotero-mcp setup  # Auto-configure (Claude Desktop supported)
 ```
 
 #### Installing via pip
 
 ```bash
-pip install git+https://github.com/54yyyu/zotero-mcp.git
+pip install zotero-mcp-server
 zotero-mcp setup  # Auto-configure (Claude Desktop supported)
 ```
 
-### Installing via Smithery
-
-To install Zotero MCP via [Smithery](https://smithery.ai/server/@54yyyu/zotero-mcp) for Claude Desktop:
+#### Installing via pipx
 
 ```bash
-npx -y @smithery/cli install @54yyyu/zotero-mcp --client claude
+pipx install zotero-mcp-server
+zotero-mcp setup  # Auto-configure (Claude Desktop supported)
 ```
 
 #### Updating Your Installation
@@ -156,6 +157,7 @@ Full documentation is available at [Zotero MCP docs](https://stevenyuyy.us/zoter
 - An MCP-compatible client (e.g., Claude Desktop, ChatGPT Developer Mode, Cherry Studio, Chorus)
 
 **For ChatGPT setup: see the [Getting Started guide](./docs/getting-started.md).**
+**For Windows local-laptop HTTPS setup: see [ChatGPT Desktop (Windows) Local HTTPS guide](./docs/chatgpt-windows-local-https.md).**
 
 ### For Claude Desktop (example MCP client)
 
@@ -226,27 +228,15 @@ Then click "Save".
 
 Cherry Studio also provides a visual configuration method for general settings and tools selection.
 
-## Advanced Configuration
+## 🔧 Advanced Configuration
 
-### Using Web API and Hybrid Routing
+### Using Web API Instead of Local API
 
-For web-only access to your Zotero library:
+For accessing your Zotero library via the web API (useful for remote setups):
 
 ```bash
 zotero-mcp setup --no-local --api-key YOUR_API_KEY --library-id YOUR_LIBRARY_ID
 ```
-
-For hybrid mode (local reads/fulltext + web writes):
-
-```bash
-zotero-mcp setup --api-key YOUR_API_KEY --library-id YOUR_LIBRARY_ID
-```
-
-When to choose Web API: If you plan to use write tools (create/update/delete items, collections, tags, notes), you need Web API credentials with write permissions.
-
-Hybrid mode is also supported and recommended for large local libraries:
-- read/fulltext via local API
-- write operations via Web API
 
 ### Environment Variables
 
@@ -255,10 +245,6 @@ Hybrid mode is also supported and recommended for large local libraries:
 - `ZOTERO_API_KEY`: Your Zotero API key (for web API)
 - `ZOTERO_LIBRARY_ID`: Your Zotero library ID (for web API)
 - `ZOTERO_LIBRARY_TYPE`: The type of library (user or group, default: user)
-- `ZOTERO_READ_MODE`: `local|web|auto` (default `auto`; prefers local when available)
-- `ZOTERO_WRITE_MODE`: `web|local|auto` (default `auto`; prefers web when credentials exist)
-- `ZOTERO_LOCAL_LIBRARY_ID`: Optional override for local API library id (default `0`)
-- `ZOTERO_ENABLE_SEMANTIC_TOOLS`: `true|false` (default `true`; set to `false` to hide semantic/db MCP tools)
 
 **Semantic Search:**
 - `ZOTERO_EMBEDDING_MODEL`: Embedding model to use (default, openai, gemini)
@@ -281,9 +267,6 @@ zotero-mcp serve --transport stdio|streamable-http|sse
 
 # Setup and configuration
 zotero-mcp setup --help                    # Get help on setup options
-zotero-mcp setup --api-key ... --library-id ... # Hybrid mode (local reads + web writes)
-zotero-mcp setup --no-local --api-key ... --library-id ... # Web-only mode
-zotero-mcp setup --disable-semantic-tools  # Hide semantic/db MCP tools for this client config
 zotero-mcp setup --semantic-config-only    # Configure only semantic search
 zotero-mcp setup-info                      # Show installation path and config info for MCP clients
 
@@ -318,15 +301,14 @@ For optimal annotation extraction, it is **highly recommended** to install the [
 
 The first time you use PDF annotation features, the necessary tools will be automatically downloaded.
 
-## Available Tools
+## 📚 Available Tools
 
-### Semantic Search Tools
-- Optional: set `ZOTERO_ENABLE_SEMANTIC_TOOLS=false` (or run setup with `--disable-semantic-tools`) to hide these tools.
+### 🧠 Semantic Search Tools
 - `zotero_semantic_search`: AI-powered similarity search with embedding models
 - `zotero_update_search_database`: Manually update the semantic search database
 - `zotero_get_search_database_status`: Check database status and configuration
 
-### Search Tools
+### 🔍 Search Tools
 - `zotero_search_items`: Search your library by keywords
 - `zotero_advanced_search`: Perform complex searches with multiple criteria
 - `zotero_get_collections`: List collections
@@ -335,56 +317,24 @@ The first time you use PDF annotation features, the necessary tools will be auto
 - `zotero_get_recent`: Get recently added items
 - `zotero_search_by_tag`: Search your library using custom tag filters
 
-### Content Tools
+### 📚 Content Tools
 - `zotero_get_item_metadata`: Get detailed metadata (supports BibTeX export via `format="bibtex"`)
 - `zotero_get_item_fulltext`: Get full text content
 - `zotero_get_item_children`: Get attachments and notes
 
-### Annotation & Notes Tools
+### 📝 Annotation & Notes Tools
 - `zotero_get_annotations`: Get annotations (including direct PDF extraction)
 - `zotero_get_notes`: Retrieve notes from your Zotero library
 - `zotero_search_notes`: Search in notes and annotations (including PDF-extracted)
 - `zotero_create_note`: Create a new note for an item (beta feature)
 
-### Write & Library Management Tools
-- Requires Web API credentials for reliable operation. In hybrid mode (`ZOTERO_LOCAL=true` + web credentials), write tools route to Web API automatically.
-- `zotero_create_items`: Create one or more items from editable JSON
-- `zotero_update_item`: Update a single item (PATCH semantics)
-- `zotero_update_items`: Batch update items (PATCH semantics)
-- `zotero_delete_item`: Delete a single item by key
-- `zotero_delete_items`: Delete multiple items by key
-- `zotero_create_collection`: Create a collection
-- `zotero_update_collection`: Update a collection (name/parent)
-- `zotero_delete_collection`: Delete a collection by key
-- `zotero_delete_collections`: Delete multiple collections by key
-- `zotero_create_saved_search`: Create a saved search
-- `zotero_delete_saved_search`: Delete saved searches by key
-- `zotero_delete_tags`: Delete tags in bulk
-- `zotero_normalize_tags`: Normalize tags by mapping/case/trim
-- `zotero_batch_update_items`: Batch update items matching conditions
-- `zotero_collect_items`: Add items matching a query to a collection
-- `zotero_plan_tag_normalization`: Plan a staged tag normalization job
-- `zotero_apply_tag_normalization`: Apply a staged tag normalization batch
-- `zotero_resume_tag_normalization`: Resume a staged tag normalization job
-
-### Staged Tag Normalization Jobs
-Tag cleanup can be done in batches with a checkpoint file stored in `~/.config/zotero-mcp/jobs/` (30-day retention). Override the base directory with `ZOTERO_MCP_DATA_DIR`.
-
-Example flow:
-1. Plan: `zotero_plan_tag_normalization(query="foo", tag_mapping={"Foo":"foo"}, case_mode="lower")`
-2. Apply in batches: `zotero_apply_tag_normalization(job_id="...", batch_size=50)`
-3. Resume later: `zotero_resume_tag_normalization(job_id="...", batch_size=50)`
-
-Tool prompt checklist: `docs/tool-prompts.md`
-
-
-## Troubleshooting
+## 🔍 Troubleshooting
 
 ### General Issues
 - **No results found**: Ensure Zotero is running and the local API is enabled. You need to toggle on `Allow other applications on this computer to communicate with Zotero` in Zotero preferences.
 - **Can't connect to library**: Check your API key and library ID if using web API
 - **Full text not available**: Make sure you're using Zotero 7+ for local full-text access
-- **Local library limitations**: The local JS API is read-focused. For writes, configure Web API credentials and use hybrid routing (`ZOTERO_READ_MODE=local`, `ZOTERO_WRITE_MODE=web`). (See the [docs](docs/getting-started.md#local-library-limitations) for more info.)
+- **Local library limitations**: Some functionality (tagging, library modifications) may not work with local JS API. Consider using web library setup for full functionality. (See the [docs](docs/getting-started.md#local-library-limitations) for more info.)
 - **Installation/search option switching issues**: Database problems from changing install methods or search options can often be resolved with `zotero-mcp update-db --force-rebuild`
 
 ### Semantic Search Issues
@@ -399,6 +349,14 @@ Tool prompt checklist: `docs/tool-prompts.md`
 - **Update command fails**: Check your internet connection and try `zotero-mcp update --force`
 - **Configuration lost after update**: The update process preserves configs automatically, but check `~/.config/zotero-mcp/` for backup files
 
-## License
+## ☕ Support
+
+If you find Zotero MCP useful, consider buying me a coffee!
+
+<a href="https://buymeacoffee.com/stevenyuyy">
+  <img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black" alt="Buy Me a Coffee">
+</a>
+
+## 📄 License
 
 MIT

@@ -1,42 +1,41 @@
+# OpenMemory Guide
+
 ## Overview
 - Project: `zotero-mcp`
-- Purpose: MCP server exposing Zotero read/write/fulltext/search tooling for AI agents.
-- Core constraint: local Zotero API is best for local full-text/read speed, while reliable create/update/delete requires Zotero Web API credentials.
+- Purpose: MCP server for Zotero read/write, annotations, notes, collections, and search workflows.
+- Latest validation artifact: `docs/zotero-mcp-tooling-test-report-2026-02-21.md`.
 
 ## Architecture
-- MCP tools are registered in `src/zotero_mcp/server.py`.
-- Zotero client creation/routing is centralized in `src/zotero_mcp/client.py`.
-- CLI/setup configuration flows are in `src/zotero_mcp/cli.py` and `src/zotero_mcp/setup_helper.py`.
+- Core server implementation: `src/zotero_mcp/server.py`
+- Client and integration helpers: `src/zotero_mcp/client.py`, `src/zotero_mcp/local_db.py`, `src/zotero_mcp/pdf_utils.py`
+- Current high-risk areas from validation:
+  - timeout-prone large-library paths
+  - high-token default response payloads
+  - parameter/schema ambiguity in some tool handlers
 
-## Key Components
-- `get_zotero_client(operation=...)` in `src/zotero_mcp/client.py`
-  - `operation="read"`: local/web routing by mode.
-  - `operation="fulltext"`: local-first for attachment/fulltext retrieval.
-  - `operation="write"`: web-first when credentials exist.
-- Setup writers in `src/zotero_mcp/setup_helper.py`
-  - Persist both local + web vars for hybrid operation.
-  - Persist `ZOTERO_READ_MODE` and `ZOTERO_WRITE_MODE`.
+## Components
+- Tool handlers: per-tool functions registered via `@mcp.tool` in `src/zotero_mcp/server.py`
+- Local vs web behavior switches:
+  - local API mode for local libraries
+  - web API mode for broader write operations
+- Output formatting layer: markdown-centric responses currently returned directly from tool handlers
 
 ## Patterns
-- Hybrid routing pattern:
-  - `ZOTERO_LOCAL=true`
-  - `ZOTERO_API_KEY`, `ZOTERO_LIBRARY_ID`, `ZOTERO_LIBRARY_TYPE` set
-  - `ZOTERO_READ_MODE=local`
-  - `ZOTERO_WRITE_MODE=web`
-- Tool-level routing in `server.py`:
-  - Read tools call `get_zotero_client(operation="read")`.
-  - Fulltext/fetch paths call `get_zotero_client(operation="fulltext")`.
-  - Mutating tools call `get_zotero_client(operation="write")`.
-- CLI output compatibility pattern:
-  - Keep `src/zotero_mcp/cli.py` output ASCII-only to avoid Windows console encoding failures.
-- Optional semantic tool exclusion pattern:
-  - Set `ZOTERO_ENABLE_SEMANTIC_TOOLS=false` to hide semantic/db MCP tools.
-  - Setup shortcut: `zotero-mcp setup --disable-semantic-tools` writes this flag into client config.
-  - Upstream-safe default remains enabled (`true`), so existing behavior is unchanged for other users.
-- Documentation anchors:
-  - `README.md`: setup/advanced configuration + environment variable references.
-  - `docs/getting-started.md`: mode selection and hybrid examples.
-  - `docs/tool-prompts.md`: tool exercise prompts and write-tool prerequisites.
+- Use disposable `MCP_TEST_*` fixtures for write-path validation and cleanup.
+- Prefer dry-run modes before batch mutations.
+- For production hardening, enforce explicit response shaping defaults (`summary` + opt-in full content).
+- For collection item lookups, fail fast on missing collection keys and avoid downstream list calls that can return misleading data.
+- For ChatGPT connector compatibility, prefer `streamable-http` transport and place a stable HTTPS tunnel/proxy in front of local `127.0.0.1` service endpoints.
+- For Windows laptop operations, keep startup/health automation in `scripts/windows/` and document end-to-end runbook steps in `docs/`.
+
+## Recent Changes
+- 2026-02-21: Fixed `zotero_get_collection_items` not-found handling in `src/zotero_mcp/server.py`.
+- 2026-02-21: Added regression test `tests/test_server_collections.py` to ensure missing collections return explicit errors and do not call `collection_items`.
+- 2026-02-22: Updated `zotero_advanced_search` in `src/zotero_mcp/server.py` to accept `operator` as an alias for `operation`.
+- 2026-02-22: Extended `tests/test_server_advanced_search.py` with alias regression coverage and verified passing targeted tests.
+- 2026-02-25: Added Windows ChatGPT HTTPS runbook `docs/chatgpt-windows-local-https.md` with streamable HTTP transport guidance, tunnel setup, validation checks, and Task Scheduler startup guidance.
+- 2026-02-25: Added helper scripts for Windows operations: `scripts/windows/preflight-repo-hygiene.cmd`, `scripts/windows/start-zotero-mcp-http.cmd`, `scripts/windows/start-cloudflared-tunnel.cmd`, `scripts/windows/start-ngrok-tunnel.cmd`, and `scripts/windows/healthcheck-zotero-mcp.cmd`.
+- 2026-02-25: Updated ChatGPT documentation in `docs/getting-started.md` and linked new Windows runbook in `README.md`.
 
 ## User Defined Namespaces
 - [Leave blank - user populates]
