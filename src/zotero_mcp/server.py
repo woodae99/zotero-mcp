@@ -1,4 +1,4 @@
-﻿"""
+"""
 Zotero MCP server implementation.
 
 Note: ChatGPT requires specific tool names "search" and "fetch", and so they
@@ -24,6 +24,8 @@ from zotero_mcp.client import (
     generate_bibtex,
     get_active_library,
     get_attachment_details,
+    get_local_zotero_client,
+    get_web_zotero_client,
     get_zotero_client,
     set_active_library,
 )
@@ -78,6 +80,99 @@ async def server_lifespan(server: FastMCP):
 
 # Create an MCP server (fastmcp 2.14+ no longer accepts `dependencies`)
 mcp = FastMCP("Zotero", lifespan=server_lifespan)
+
+
+def _get_runtime_capabilities() -> dict[str, object]:
+    """Summarize the current read/write capability split for MCP clients."""
+    local_mode_configured = is_local_mode()
+    local_read_available = False
+    local_read_error = None
+
+    if local_mode_configured:
+        try:
+            local_read_available = get_local_zotero_client() is not None
+        except Exception as exc:
+            local_read_error = str(exc)
+
+    web_write_configured = get_web_zotero_client() is not None
+    active_library = get_active_library()
+    library_id = active_library.get("library_id") or os.getenv("ZOTERO_LIBRARY_ID")
+    library_type = active_library.get("library_type") or os.getenv("ZOTERO_LIBRARY_TYPE", "user")
+    local_port = os.getenv("ZOTERO_LOCAL_PORT", "23119")
+
+    return {
+        "read_mode": "local" if local_mode_configured else "web",
+        "local_mode_configured": local_mode_configured,
+        "local_read_available": local_read_available,
+        "local_read_error": local_read_error,
+        "web_write_configured": web_write_configured,
+        "note_creation_via_local_connector": local_mode_configured,
+        "local_connector_url": f"http://127.0.0.1:{local_port}/connector/saveItems",
+        "library_id": library_id,
+        "library_type": library_type,
+        "active_library_override": bool(active_library),
+    }
+
+
+@mcp.tool(
+    name="zotero_get_capabilities",
+    description=(
+        "Report the current Zotero MCP capability split so agents can route calls "
+        "intelligently. Read tools usually use the configured read client "
+        "(often the local Zotero API when ZOTERO_LOCAL=true). Most write tools "
+        "require Zotero web API credentials because the local API is read-only, "
+        "with zotero_create_note as the main local-connector exception."
+    ),
+)
+def get_capabilities(*, ctx: Context) -> str:
+    """Return a human-readable capability summary for the current environment."""
+    try:
+        capabilities = _get_runtime_capabilities()
+
+        output = ["# Zotero MCP Capabilities", ""]
+        output.append(f"- Read mode preference: {capabilities['read_mode']}")
+        output.append(f"- Local mode configured: {capabilities['local_mode_configured']}")
+        output.append(f"- Local read access available now: {capabilities['local_read_available']}")
+        output.append(f"- Web write credentials configured: {capabilities['web_write_configured']}")
+        output.append(
+            "- Local connector note creation path available by configuration: "
+            f"{capabilities['note_creation_via_local_connector']}"
+        )
+
+        if capabilities["library_id"]:
+            output.append(
+                f"- Active library target: {capabilities['library_type']}:{capabilities['library_id']}"
+            )
+        else:
+            output.append("- Active library target: local default or not configured")
+
+        if capabilities["active_library_override"]:
+            output.append("- Runtime library override is active")
+
+        output.append("")
+        output.append("## Routing Guidance")
+        output.append(
+            "- Read/search/fetch tools follow the configured read mode and typically use the local Zotero API when ZOTERO_LOCAL=true."
+        )
+        output.append(
+            "- Most write/update/delete/collection/tag tools require the Zotero web API because the local API is read-only."
+        )
+        output.append(
+            "- zotero_create_note is the main exception: in local mode it can create notes via the Zotero connector saveItems endpoint."
+        )
+        output.append(
+            "- zotero_create_annotation always writes via the web API even when local file access is used to inspect attachments."
+        )
+
+        if capabilities["local_read_error"]:
+            output.append("")
+            output.append("## Local Read Diagnostics")
+            output.append(f"- Last local read check error: {capabilities['local_read_error']}")
+
+        return "\n".join(output)
+    except Exception as e:
+        ctx.error(f"Error getting capabilities: {e}")
+        return f"Error getting capabilities: {e}"
 
 
 @mcp.tool(
@@ -1111,7 +1206,10 @@ def get_recent(
 
 @mcp.tool(
     name="zotero_batch_update_tags",
-    description="Batch update tags across multiple items matching a search query."
+    description=(
+        "Batch update tags across multiple items matching a search query. "
+        "Requires the Zotero web API; the local Zotero API is read-only."
+    )
 )
 def batch_update_tags(
     query: str,
@@ -1181,7 +1279,7 @@ def batch_update_tags(
             return "Error: After parsing, no valid tags were provided to add or remove"
 
         ctx.info(f"Batch updating tags for items matching '{query}'")
-        zot = get_zotero_client(operation="write")
+        zot = _get_write_client()
 
         if isinstance(limit, str):
             limit = int(limit)
@@ -2126,7 +2224,11 @@ def search_notes(
 
 @mcp.tool(
     name="zotero_create_note",
-    description="Create a new note for a Zotero item."
+    description=(
+        "Create a new note for a Zotero item. In local mode this can write via "
+        "the Zotero connector saveItems endpoint; otherwise it uses the Zotero "
+        "web API."
+    )
 )
 def create_note(
     item_key: str,
@@ -2240,7 +2342,11 @@ def create_note(
 
 @mcp.tool(
     name="zotero_create_annotation",
-    description="Create a highlight annotation on a PDF or EPUB attachment with optional comment."
+    description=(
+        "Create a highlight annotation on a PDF or EPUB attachment with optional "
+        "comment. Annotation creation always requires the Zotero web API for the "
+        "write step."
+    )
 )
 def create_annotation(
     attachment_key: str,
@@ -2528,8 +2634,22 @@ def create_annotation(
 # Write & Management Tools
 # All write operations require the Zotero web API (ZOTERO_API_KEY +
 # ZOTERO_LIBRARY_ID).  In hybrid setups (local reads + web writes) the
-# get_zotero_client(operation="write") call in each tool handles routing.
+# _get_write_client() call in each tool handles routing.
 # ---------------------------------------------------------------------------
+
+def _get_write_client():
+    zot = get_zotero_client(operation="write")
+    endpoint = str(getattr(zot, "endpoint", ""))
+    local_mode = bool(getattr(zot, "local", False))
+
+    if local_mode or "localhost:23119" in endpoint or "127.0.0.1:23119" in endpoint:
+        raise ValueError(
+            "Write operations must use the Zotero web API endpoint, but a local API "
+            "client was selected. Configure ZOTERO_API_KEY and ZOTERO_LIBRARY_ID for "
+            "writes; local API is read-only."
+        )
+
+    return zot
 
 def _apply_tag_rules(
     tags: list[dict],
@@ -2620,7 +2740,7 @@ def create_items(
             return f"Error: itemType missing for item(s): {', '.join(map(str, missing_types))}"
 
         ctx.info(f"Creating {len(items_list)} item(s)")
-        zot = get_zotero_client(operation="write")
+        zot = _get_write_client()
         result = zot.create_items(items_list, parentid=parent_item_key)
 
         success = result.get("success") or result.get("successful") or {}
@@ -2689,7 +2809,7 @@ def update_item(
             return "Error: updates must be a dict or JSON string."
 
         ctx.info(f"Updating item {item_key}")
-        zot = get_zotero_client(operation="write")
+        zot = _get_write_client()
 
         item = zot.item(item_key)
         if not item:
@@ -2738,7 +2858,7 @@ def delete_item(
             return "Error: item_keys must be a non-empty string or list of strings."
 
         ctx.info(f"Deleting {len(item_keys)} item(s)")
-        zot = get_zotero_client(operation="write")
+        zot = _get_write_client()
 
         if len(item_keys) == 1:
             item = zot.item(item_keys[0])
@@ -2787,7 +2907,7 @@ def create_collection(
     """
     try:
         ctx.info(f"Creating collection '{name}'")
-        zot = get_zotero_client(operation="write")
+        zot = _get_write_client()
         payload: dict = {"name": name}
         if parent_collection_key:
             payload["parentCollection"] = parent_collection_key
@@ -2831,7 +2951,7 @@ def update_collection(
     """
     try:
         ctx.info(f"Updating collection {collection_key}")
-        zot = get_zotero_client(operation="write")
+        zot = _get_write_client()
         coll = zot.collection(collection_key)
         if not coll:
             return f"Error: No collection found with key: {collection_key}"
@@ -2881,7 +3001,7 @@ def delete_collection(
             return "Error: collection_keys must be a non-empty string or list of strings."
 
         ctx.info(f"Deleting {len(collection_keys)} collection(s)")
-        zot = get_zotero_client(operation="write")
+        zot = _get_write_client()
 
         if len(collection_keys) == 1:
             coll = zot.collection(collection_keys[0])
@@ -2936,7 +3056,7 @@ def delete_tags(
             return "Error: tags must be a non-empty string or list of strings."
 
         ctx.info(f"Deleting {len(tags)} tag(s)")
-        zot = get_zotero_client(operation="write")
+        zot = _get_write_client()
         result = zot.delete_tags(*tags)
         return f"Deleted tags {tags}: {result}"
     except Exception as e:
@@ -2996,7 +3116,7 @@ def normalize_tags(
             limit = int(limit)
 
         ctx.info(f"Normalizing tags for '{query}' (dry_run={dry_run})")
-        zot = get_zotero_client(operation="write")
+        zot = _get_write_client()
         zot.add_parameters(q=query, itemType="-attachment", limit=limit)
         items = zot.items()
 
@@ -3109,7 +3229,7 @@ def batch_update_items(
             limit = int(limit)
 
         ctx.info(f"Batch updating items matching '{query}' (dry_run={dry_run})")
-        zot = get_zotero_client(operation="write")
+        zot = _get_write_client()
         zot.add_parameters(q=query, itemType=item_type, limit=limit)
         items = zot.items()
 
@@ -3196,7 +3316,7 @@ def collect_items(
             limit = int(limit)
 
         ctx.info(f"Collecting items matching '{query}' into {collection_key} (dry_run={dry_run})")
-        zot = get_zotero_client(operation="write")
+        zot = _get_write_client()
         zot.add_parameters(q=query, itemType="-attachment", limit=limit)
         items = zot.items()
 

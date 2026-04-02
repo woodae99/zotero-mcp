@@ -157,6 +157,7 @@ Full documentation is available at [Zotero MCP docs](https://stevenyuyy.us/zoter
 - An MCP-compatible client (e.g., Claude Desktop, ChatGPT Developer Mode, Cherry Studio, Chorus)
 
 **For ChatGPT setup: see the [Getting Started guide](./docs/getting-started.md).**
+**For Windows local-laptop HTTPS setup: see [ChatGPT Desktop (Windows) Local HTTPS guide](./docs/chatgpt-windows-local-https.md).**
 
 ### For Claude Desktop (example MCP client)
 
@@ -171,17 +172,22 @@ After installation, either:
 2. **Manual configuration**:
    Add to your `claude_desktop_config.json`:
    ```json
-   {
-     "mcpServers": {
-       "zotero": {
-         "command": "zotero-mcp",
+  {
+    "mcpServers": {
+      "zotero": {
+        "command": "zotero-mcp",
          "env": {
            "ZOTERO_LOCAL": "true"
          }
        }
-     }
-   }
-   ```
+    }
+  }
+  ```
+
+  For hybrid local-read/web-write setups, keep `ZOTERO_API_KEY`, `ZOTERO_LIBRARY_ID`,
+  and `ZOTERO_LIBRARY_TYPE` in the same config alongside `ZOTERO_LOCAL=true`.
+  Reads can use the local Zotero instance, while write-capable tools can still
+  route through the Zotero web API when needed.
 
 #### Usage
 
@@ -320,12 +326,13 @@ The first time you use PDF annotation features, the necessary tools will be auto
 - `zotero_get_item_metadata`: Get detailed metadata (supports BibTeX export via `format="bibtex"`)
 - `zotero_get_item_fulltext`: Get full text content
 - `zotero_get_item_children`: Get attachments and notes
+- `zotero_get_capabilities`: Inspect whether the current MCP session has local reads, web-write credentials, and any special routing exceptions
 
 ### 📝 Annotation & Notes Tools
 - `zotero_get_annotations`: Get annotations (including direct PDF extraction)
 - `zotero_get_notes`: Retrieve notes from your Zotero library
 - `zotero_search_notes`: Search in notes and annotations (including PDF-extracted)
-- `zotero_create_note`: Create a new note for an item (beta feature)
+- `zotero_create_note`: Create a new note for an item (beta feature; in local mode it can write via Zotero's local connector)
 
 ## 🔍 Troubleshooting
 
@@ -333,7 +340,7 @@ The first time you use PDF annotation features, the necessary tools will be auto
 - **No results found**: Ensure Zotero is running and the local API is enabled. You need to toggle on `Allow other applications on this computer to communicate with Zotero` in Zotero preferences.
 - **Can't connect to library**: Check your API key and library ID if using web API
 - **Full text not available**: Make sure you're using Zotero 7+ for local full-text access
-- **Local library limitations**: Some functionality (tagging, library modifications) may not work with local JS API. Consider using web library setup for full functionality. (See the [docs](docs/getting-started.md#local-library-limitations) for more info.)
+- **Local library limitations**: Most write tools need web API credentials because the local API is read-only, though `zotero_create_note` can use the local connector in local mode. Consider hybrid config for full functionality. (See the [docs](docs/getting-started.md#local-library-limitations) for more info.)
 - **Installation/search option switching issues**: Database problems from changing install methods or search options can often be resolved with `zotero-mcp update-db --force-rebuild`
 
 ### Semantic Search Issues

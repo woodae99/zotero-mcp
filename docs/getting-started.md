@@ -74,73 +74,26 @@ To use Zotero MCP with Claude Desktop:
 
 - The tool should be available automatically: if not, you might need to double check in the connections menu under Settings.
 
-## **New**: Integrating with OpenAI's ChatGPT
+## Integrating with OpenAI ChatGPT (Developer Mode)
 
-This is a new (September 2025) option available through the ChatGPT web app. For the web app, you must use [ChatGPT Developer mode](https://platform.openai.com/docs/guides/developer-mode) which may be restricted to a limited number of OpenAI platforms and apps. A paid subscription appears to be required.
+ChatGPT custom MCP connectors require an HTTPS-reachable MCP endpoint. A practical setup is to run `zotero-mcp` locally on your laptop and expose it through an HTTPS tunnel/proxy.
 
-As of today, zotero-mcp is not available by default on as a web-based MCP, and it seems likely that many users will want to stick with a local MCP due to their large document libraries. Since ChatGPT does not support local MCPs natively through their desktop app (yet?) the way you can move forward is by tunneling.
+Use `streamable-http` for new setups:
 
-**Use at your own risk**
-While we think that the risk to many individuals will be quite low (Zotero libraries are often composed of large numbers of publically-available documents), the risk of data loss or theft will be present. We are working on a way to secure the server connection (this should be available soon), but even with absolute security there is still the exposure to the AI itself, which we leave to the user to judge for themselves. Please consider your situation before continuing with this guide.
+```bash
+zotero-mcp serve --transport streamable-http --host 127.0.0.1 --port 8000
+```
 
-### Setting up a desktop tunnel for zotero-mcp
+Then create an HTTPS tunnel endpoint (for example, Cloudflare Tunnel or ngrok with a reserved domain) that forwards traffic to `127.0.0.1:8000`.
 
-A tunnel makes your locally running `zotero-mcp` server securely available to a web service like ChatGPT. We recommend [ngrok](https://ngrok.com/) for this.
+In ChatGPT Developer Mode:
 
-1.  **Install ngrok**: Follow the instructions on the [ngrok website](https://ngrok.com/download) to download and install it. Mac users can use `brew` and we have successfully tested this approach.
+1. Open **Settings -> Connectors -> Create**.
+2. Set the MCP URL to your HTTPS endpoint.
+3. Select **No authentication** for this setup.
+4. Save and verify that tools are discovered.
 
-2.  **Start the `zotero-mcp` server**: Before starting the tunnel, make sure your MCP server is running. For web-based clients, the `sse` transport is recommended. Open a terminal and run:
-    ```bash
-    # Make sure your Zotero environment variables are set first!
-    # e.g., export ZOTERO_LOCAL=true
-    zotero-mcp serve --transport sse --host 0.0.0.0 --port 8000
-    ```
-
-Important: you should probably leave this terminal open in order to ensure tunnel traffic is successfully transiting to the server.
-
-3.  **Start the ngrok tunnel**: Open a *second* terminal and start ngrok, pointing it to the port your server is using (8000). Here is an instruction that will work on a mac
-    ```bash
-    ngrok http 8000
-    ```
-4.  **Copy the URL**: Ngrok will provide a public `Forwarding` URL that looks something like `https://<random-string>.ngrok-free.app`. Copy this HTTPS URL—you'll need it for the ChatGPT connector setup.
-
-### Setting up a ChatGPT or OpenAI client for zotero-mcp
-There are actually two ways to work with ChatGPT on the web once you have a tunnel open to your server: through the ChatGPT app at [chatgpt.com](https://chatgpt.com), or through the chat prompt builder screen at the [OpenAI platform page](https://platform.openai.com/chat).
-
-The setup is nearly identical for both.
-
-#### 1. ChatGPT.com setup
-
-1.  Navigate to [chatgpt.com](https://chatgpt.com). Make sure you are logged in, and at the base "chat" user interface.
-2.  Click on your profile name, then **Settings**.
-3.  Go to the **Connectors** tab:
-    *   First you must enable "Developer Mode." At the bottom of the connectors tab, there is an "Advanced..." button. Click this and then on the next screen enable "Developer Mode."
-    *   Now from the main Connectors browser window, click **Create**
-4.  Fill in the details:
-    *   **Name**: Zotero MCP
-    *   **Description**: Search and retrieve documents from a local Zotero library.
-    *   **MCP Server URL**: This is the critical part. You need to combine your ngrok URL, the `/sse/` endpoint (with a trailing slash), and a unique `session_id`.
-        *   The trailing slash on `/sse/` is important to avoid a redirect.
-        *   The `session_id` must be a valid [UUIDv4](https://www.uuidgenerator.net/). While some clients might negotiate a session automatically, explicitly providing a unique ID is the most reliable method.
-        *   Example URL: `https://<YOUR_NGROK_URL>.ngrok-free.app/sse/?session_id=<YOUR_UUID>`
-    *   **Authentication**: `No authentication`
-    *   Tick the "I trust this application" checkbox.
-5.  Click **Create**. If you are successfully connecting you should see relevant communications logs in your tunnel and your server terminals. If this is successful, an important indication will be the listing of all zotero-mcp tools in the ChatGPT interface.
-    *   *Important: our testing indicates that you need to turn all the "Edit" sliders to "Off" in the list of tools.* Otherwise the tool may not be enabled in Developer Mode.
-
-      ![ChatGPT Connector Tool List](../public/ChatGPT_zot_mcp_1.png)
-
-6.  You should now be ready to add Zotero-MCP to new chats. To do this, go to the main ChatGPT interface. It should indicate that you are in development mode. When you start a new chat, click the "plus" icon in the text box interface to select "Deep Research" as a chat mode. A "Sources" menu will become available: enable Zotero-MCP as one of the sources:
-
-      ![Enable Zotero-MCP as a Source](../public/ChatGPT_zot_mcp_2.png)
-
-#### 2. OpenAI Chat Builder setup
-
-The process is the same as above, but you create the connector within the context of building a custom GPT on the OpenAI Platform.
-
-1.  Navigate to the [OpenAI Platform Chat page](https://platform.openai.com/chat).
-2.  When configuring a custom GPT, go to the **Tools** section and choose to add an MCP connector.
-3.  Follow the same steps as in the `ChatGPT.com setup` to configure the connector URL and other details.
+For a full Windows travel-laptop runbook (startup, tunnel stability, validation, and recovery), see [ChatGPT Desktop (Windows) Local HTTPS guide](./chatgpt-windows-local-https.md).
 
 ## Integrating with Chorus.sh
 
@@ -173,10 +126,10 @@ Zotero MCP works with any MCP-compatible client. You can start the server manual
 zotero-mcp serve --transport stdio
 ```
 
-For HTTP/SSE-based clients:
+For HTTP-based clients:
 
 ```bash
-zotero-mcp serve --transport sse --host localhost --port 8000
+zotero-mcp serve --transport streamable-http --host localhost --port 8000
 ```
 
 
@@ -199,6 +152,7 @@ When connected to Claude Desktop or another MCP client, you'll have access to th
 - **zotero_get_recent**: Get recently added items to your library
 - **zotero_get_annotations**: Get PDF/EPUB annotations for an item
 - **zotero_get_notes**: Get notes attached to an item
+- **zotero_get_capabilities**: Inspect whether the current MCP session has local reads, web-write credentials, and any special routing exceptions
 - **zotero_list_libraries**: List accessible Zotero libraries
 - **zotero_list_feeds**: List RSS/Atom feeds in your library
 - **zotero_get_feed_items**: Get items from a feed
@@ -219,6 +173,8 @@ automatically route writes through the web API.
 - **zotero_delete_item**: Delete one or more items (accepts a single key or a list)
 
 #### Notes
+- `zotero_create_note` can write in local mode via Zotero's connector `saveItems` endpoint.
+- `zotero_create_annotation` still performs the write step via the Zotero web API.
 - **zotero_create_note**: Create a note attached to an item — ideal for summaries, reviews, or extracted insights
 - **zotero_create_annotation**: Create a highlight annotation on a PDF or EPUB
 
@@ -268,6 +224,10 @@ If you encounter issues:
 
 The local Zotero API (port 23119) is read-only — it does not support creating or modifying items,
 collections, or tags. Write and management tools require the Zotero web API.
+
+Exception: `zotero_create_note` can still create notes in local mode via Zotero's
+local connector endpoint, while `zotero_create_annotation` continues to require
+the web API for the write step.
 
 **Recommended hybrid setup**: supply both local and web credentials. Reads are fast (local), and
 writes are routed automatically to the web API:
