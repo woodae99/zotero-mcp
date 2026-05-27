@@ -1175,6 +1175,328 @@ _UPDATE_ITEM_API_TO_PARAM = {
 }
 
 
+_CREATE_ITEM_PARAM_TO_API = {
+    "title": "title",
+    "date": "date",
+    "access_date": "accessDate",
+    "publication_title": "publicationTitle",
+    "abstract": "abstractNote",
+    "doi": "DOI",
+    "url": "url",
+    "extra": "extra",
+    "volume": "volume",
+    "issue": "issue",
+    "pages": "pages",
+    "publisher": "publisher",
+    "place": "place",
+    "edition": "edition",
+    "isbn": "ISBN",
+    "issn": "ISSN",
+    "language": "language",
+    "short_title": "shortTitle",
+    "book_title": "bookTitle",
+}
+
+
+def _creator_type_name(raw):
+    if isinstance(raw, dict):
+        return raw.get("creatorType") or raw.get("id") or raw.get("name")
+    return raw
+
+
+def _get_allowed_creator_types(write_zot, item_type: str) -> set[str]:
+    try:
+        return {
+            name
+            for name in (_creator_type_name(c) for c in write_zot.item_creator_types(item_type))
+            if name
+        }
+    except Exception:
+        return set()
+
+
+def _normalize_creators_for_create(
+    creators: list[dict] | str | None,
+    allowed_creator_types: set[str],
+) -> list[dict]:
+    if creators is None:
+        return []
+    if isinstance(creators, str):
+        creators = json.loads(creators)
+    if not isinstance(creators, list):
+        raise ValueError("creators must be an array of Zotero creator objects")
+
+    normalized = []
+    for idx, creator in enumerate(creators, 1):
+        if not isinstance(creator, dict):
+            raise ValueError(f"creator #{idx} must be an object")
+        creator_type = creator.get("creatorType")
+        if not creator_type:
+            raise ValueError(f"creator #{idx} is missing creatorType")
+        if allowed_creator_types and creator_type not in allowed_creator_types:
+            allowed = ", ".join(sorted(allowed_creator_types))
+            raise ValueError(
+                f"creator #{idx} has creatorType '{creator_type}', "
+                f"which is not valid for this item type. Allowed: {allowed}"
+            )
+
+        has_name = bool(str(creator.get("name", "")).strip())
+        has_last = bool(str(creator.get("lastName", "")).strip())
+        has_first = bool(str(creator.get("firstName", "")).strip())
+        if not has_name and not (has_first or has_last):
+            raise ValueError(
+                f"creator #{idx} must include either name or firstName/lastName"
+            )
+        if has_name and (has_first or has_last):
+            raise ValueError(
+                f"creator #{idx} must use either single-field name or firstName/lastName, not both"
+            )
+
+        clean = {"creatorType": creator_type}
+        if has_name:
+            clean["name"] = str(creator["name"]).strip()
+        else:
+            clean["firstName"] = str(creator.get("firstName", "")).strip()
+            clean["lastName"] = str(creator.get("lastName", "")).strip()
+        normalized.append(clean)
+    return normalized
+
+
+def _pin_citation_key(extra: str | None, citation_key: str | None) -> str:
+    if not citation_key:
+        return extra or ""
+    extra = extra or ""
+    if _helpers._extra_has_citekey(extra, citation_key):
+        return extra
+    line = f"Citation Key: {citation_key}"
+    return f"{extra.rstrip()}\n{line}".strip() if extra.strip() else line
+
+
+def _resolve_collection_keys_and_report(read_zot, collections, ctx: Context) -> tuple[list[str], list[dict]]:
+    raw_values = _helpers._normalize_str_list_input(collections, "collections")
+    resolved_keys = []
+    resolution = []
+    names = []
+
+    for value in raw_values:
+        if re.match(r"^[A-Z0-9]{8}$", value):
+            resolved_keys.append(value)
+            resolution.append({"input": value, "used": value, "match": "key"})
+        else:
+            names.append(value)
+
+    if names:
+        resolved_names = _helpers._resolve_collection_names(read_zot, names, ctx=ctx)
+        for name, key in zip(names, resolved_names, strict=False):
+            resolution.append({"input": name, "used": key, "match": "name"})
+        resolved_keys.extend(resolved_names)
+
+    return resolved_keys, resolution
+
+
+@mcp.tool(
+    name="zotero_create_item",
+    description=(
+        "Create a Zotero item manually from explicit metadata instead of "
+        "resolving an identifier or importing a citation file. Use this when "
+        "the user has partial or curated metadata for a bookSection, book, "
+        "journalArticle, thesis, report, webpage, conferencePaper, or another "
+        "valid Zotero itemType. Prefer zotero_add_by_doi, zotero_add_by_url, "
+        "zotero_add_by_isbn, zotero_add_by_bibtex, or zotero_add_by_csl_json "
+        "when the user has one of those source identifiers/files. "
+        "item_type must be a Zotero itemType value; title is required. "
+        "creators must be Zotero creator objects with creatorType plus either "
+        "firstName/lastName or single-field name. Optional fields are applied "
+        "only when valid for the item type; invalid fields are skipped with "
+        "warnings. collections accepts 8-character collection keys or exact "
+        "collection names; tags accepts a list or JSON/comma string. "
+        "citation_key pins a Better BibTeX-style Citation Key line in Extra. "
+        "relations accepts a Zotero relations object. dry_run=True validates "
+        "and returns the payload without creating the item. Requires a "
+        "writable library (web API key or hybrid mode); fails in local-only "
+        "mode unless dry_run can use the read client for validation. "
+        "Run zotero_update_search_database afterwards for semantic search."
+    )
+)
+@with_zotero_api_lock
+def create_item(
+    item_type: str,
+    title: str,
+    creators: list[dict] | str | None = None,
+    date: str | None = None,
+    access_date: str | None = None,
+    abstract: str | None = None,
+    book_title: str | None = None,
+    publication_title: str | None = None,
+    publisher: str | None = None,
+    place: str | None = None,
+    edition: str | None = None,
+    volume: str | None = None,
+    issue: str | None = None,
+    pages: str | None = None,
+    doi: str | None = None,
+    isbn: str | None = None,
+    issn: str | None = None,
+    url: str | None = None,
+    language: str | None = None,
+    short_title: str | None = None,
+    extra: str | None = None,
+    citation_key: str | None = None,
+    collections: list[str] | str | None = None,
+    tags: list[str] | str | None = None,
+    relations: dict | str | None = None,
+    dry_run: bool = False,
+    *,
+    ctx: Context
+) -> str:
+    dry_run_without_write = False
+    try:
+        read_zot, write_zot = _helpers._get_write_client(ctx)
+    except ValueError as e:
+        if not dry_run:
+            return str(e)
+        try:
+            read_zot = write_zot = _client.get_zotero_client()
+            dry_run_without_write = True
+        except Exception:
+            return str(e)
+
+    try:
+        item_type = (item_type or "").strip()
+        title = (title or "").strip()
+        if not item_type:
+            return "Error: item_type is required."
+        if not title:
+            return "Error: title is required."
+
+        ctx.info(f"Preparing manual Zotero item ({item_type}): {title}")
+
+        try:
+            item_data = dict(write_zot.item_template(item_type))
+        except Exception as e:
+            return f"Error: unknown or unsupported Zotero item_type '{item_type}': {e}"
+
+        item_data["title"] = title
+        warnings = []
+        if dry_run_without_write:
+            warnings.append(
+                "Dry run used the read client because no write client is configured."
+            )
+
+        field_values = {
+            "date": date,
+            "access_date": access_date,
+            "abstract": abstract,
+            "book_title": book_title,
+            "publication_title": publication_title,
+            "publisher": publisher,
+            "place": place,
+            "edition": edition,
+            "volume": volume,
+            "issue": issue,
+            "pages": pages,
+            "doi": doi,
+            "isbn": isbn,
+            "issn": issn,
+            "url": url,
+            "language": language,
+            "short_title": short_title,
+            "extra": extra,
+        }
+        for param_name, value in field_values.items():
+            if value is None:
+                continue
+            api_field = _CREATE_ITEM_PARAM_TO_API[param_name]
+            if api_field in item_data:
+                item_data[api_field] = value
+            else:
+                warnings.append(
+                    f"Skipped {param_name}: not valid for item type '{item_type}'"
+                )
+
+        if citation_key:
+            if "extra" in item_data:
+                item_data["extra"] = _pin_citation_key(item_data.get("extra", ""), citation_key)
+            else:
+                warnings.append(
+                    f"Skipped citation_key: item type '{item_type}' has no Extra field"
+                )
+
+        allowed_creator_types = _get_allowed_creator_types(write_zot, item_type)
+        normalized_creators = _normalize_creators_for_create(creators, allowed_creator_types)
+        if normalized_creators:
+            item_data["creators"] = normalized_creators
+
+        tag_list = _helpers._normalize_str_list_input(tags, "tags")
+        if tag_list:
+            item_data["tags"] = [{"tag": t} for t in tag_list]
+
+        collection_resolution = []
+        if collections is not None:
+            coll_keys, collection_resolution = _resolve_collection_keys_and_report(
+                read_zot, collections, ctx
+            )
+            if coll_keys:
+                item_data["collections"] = coll_keys
+
+        if relations is not None:
+            if isinstance(relations, str):
+                relations = json.loads(relations)
+            if not isinstance(relations, dict):
+                raise ValueError("relations must be an object")
+            if "relations" in item_data:
+                item_data["relations"] = relations
+            else:
+                warnings.append(
+                    f"Skipped relations: not valid for item type '{item_type}'"
+                )
+
+        if dry_run:
+            return json.dumps(
+                {
+                    "ok": True,
+                    "dry_run": True,
+                    "item_type": item_type,
+                    "title": title,
+                    "payload": item_data,
+                    "collection_resolution": collection_resolution,
+                    "warnings": warnings,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+
+        result = write_zot.create_items([item_data])
+        if not isinstance(result, dict) or not result.get("success"):
+            return f"Failed to create item: {result}"
+
+        item_key = next(iter(result["success"].values()))
+        response = {
+            "ok": True,
+            "item_key": item_key,
+            "citation_key": citation_key,
+            "item_type": item_type,
+            "title": title,
+            "zotero_uri": f"zotero://select/library/items/{item_key}",
+            "warnings": warnings,
+            "collection_resolution": collection_resolution,
+            "metadata": item_data,
+            "create_response": result,
+        }
+        try:
+            response["created_item"] = write_zot.item(item_key)
+        except Exception as e:
+            warnings.append(f"Created item, but could not fetch it back: {e}")
+
+        return json.dumps(response, indent=2, ensure_ascii=False)
+
+    except ValueError as e:
+        return f"Input error: {e}"
+    except Exception as e:
+        ctx.error(f"Error creating item: {e}")
+        return f"Error creating item: {e}"
+
+
 @mcp.tool(
     name="zotero_update_item",
     description=(
